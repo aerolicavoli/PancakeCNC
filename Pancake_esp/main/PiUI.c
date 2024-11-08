@@ -97,13 +97,16 @@ void PiUIInit()
 
     // Test logging
     ESP_LOGI("UART_LOG", "UART Initialized");
+
+    vTaskDelay(pdMS_TO_TICKS(1000));  // Adjust delay as needed
+
 }
 
 void PiUIStart()
 {
     xTaskCreate(SerialCommunicationTask,
                  "PiUI",
-                 2048,
+                 8192,
                  NULL,
                  1,
                  NULL);
@@ -118,12 +121,17 @@ void SerialCommunicationTask(void *pvParameters)
         int len = uart_read_bytes(UART_NUM, data, UART_BUF_SIZE, pdMS_TO_TICKS(1000));
         if (len > 0) {
             ESP_LOGI(TAG, "Data received: %d bytes", len);
+
             if (parse_message(data, len, &message)) {
                 route_message(&message);
             } else {
                 ESP_LOGW(TAG, "Failed to parse message");
             }
         }
+
+        //UBaseType_t stack_high_water_mark = uxTaskGetStackHighWaterMark(NULL);
+        //ESP_LOGI(TAG, "Stack High Water Mark: %u", stack_high_water_mark);
+
         vTaskDelay(pdMS_TO_TICKS(100));  // Adjust delay as needed
     }
 
