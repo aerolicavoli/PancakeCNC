@@ -5,8 +5,9 @@ import time
 import string
 
 # Serial port configuration
-SERIAL_PORT = '/dev/ttys0'  # Update this to your serial port
-BAUD_RATE = 115200
+SERIAL_PORT = '/dev/ttys0'  # Mac
+SERIAL_PORT = '/dev/ttyAMA0'  # Pi
+BAUD_RATE = 9600
 
 # Protocol constants
 STX = 0x02
