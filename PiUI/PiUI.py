@@ -66,6 +66,7 @@ def parse_message_stream(ser):
             time.sleep(0.01)
             continue
         b = byte[0]
+        # print(f"Data received: {byte}")
 
         # Handle escaping
         if escape_next:
@@ -83,13 +84,14 @@ def parse_message_stream(ser):
                 payload.clear()
         elif state == STATE_READ_TYPE:
             message_type = b
-            checksum ^= b
             state = STATE_READ_LENGTH
         elif state == STATE_READ_LENGTH:
             payload_length = b
-            checksum ^= b
             if payload_length == 0:
                 state = STATE_READ_CHECKSUM  # No payload to read
+            else:
+                state = STATE_READ_PAYLOAD
+
         elif state == STATE_READ_PAYLOAD:
             payload.append(b)
             checksum ^= b
