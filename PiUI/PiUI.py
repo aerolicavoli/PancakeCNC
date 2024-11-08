@@ -17,7 +17,7 @@ ESC = 0x10
 # Message types
 MSG_TYPE_COMMAND = 0x01
 MSG_TYPE_TELEMETRY = 0x02
-MSG_TYPE_LOG = 0x03
+MSG_TYPE_LOG = 0x03  # New message type for log messages
 
 def calculate_checksum(payload):
     checksum = 0
@@ -30,93 +30,91 @@ def build_message(message_type, payload):
     message.append(STX)
     message.append(message_type)
     message.append(len(payload))
-    message.extend(payload)
-    checksum = calculate_checksum(payload)
+    # Payload with escaping
+    escaped_payload = bytearray()
+    for byte in payload:
+        if byte in (STX, ETX, ESC):
+            escaped_payload.append(ESC)
+            escaped_payload.append(byte ^ 0x20)
+        else:
+            escaped_payload.append(byte)
+    message.extend(escaped_payload)
+    checksum = calculate_checksum(payload)  # Checksum is calculated on original payload
     message.append(checksum)
     message.append(ETX)
     return message
 
-def parse_message(data):
-    if len(data) < 5:
-        print("Received data too short")
-        return None
+def parse_message_stream(ser):
+    STATE_WAIT_FOR_STX = 0
+    STATE_READ_TYPE = 1
+    STATE_READ_LENGTH = 2
+    STATE_READ_PAYLOAD = 3
+    STATE_READ_CHECKSUM = 4
+    STATE_WAIT_FOR_ETX = 5
 
-    if data[0] != STX or data[-1] != ETX:
-        print("Invalid start or end delimiter")
-        return None
-
-    message_type = data[1]
-    payload_length = data[2]
-
+    state = STATE_WAIT_FOR_STX
+    message_type = None
+    payload_length = None
     payload = []
-    index = 3
-    end_index = len(data) - 2  # Exclude checksum and ETX
     checksum = 0
+    escape_next = False
 
-    while index < end_index:
-        byte = data[index]
-        index += 1
-        if byte == ESC:
-            if index >= end_index:
-                print("Incomplete escape sequence")
-                return None
-            next_byte = data[index] ^ 0x20
-            index += 1
-            payload.append(next_byte)
-            checksum ^= next_byte
-        else:
-            payload.append(byte)
-            checksum ^= byte
-
-    calculated_checksum = checksum
-    received_checksum = data[-2]
-
-    if calculated_checksum != received_checksum:
-        print("Checksum mismatch")
-        return None
-
-    return {
-        'message_type': message_type,
-        'payload': bytes(payload)
-    }
-
-
-def read_from_port(ser):
-    buffer = bytearray()
     while True:
-        if ser.in_waiting > 0:
-            data = ser.read(ser.in_waiting)
-            buffer.extend(data)
-            while True:
-                if STX in buffer:
-                    start_idx = buffer.index(STX)
-                    if ETX in buffer[start_idx:]:
-                        end_idx = buffer.index(ETX, start_idx)
-                        complete_msg = buffer[start_idx:end_idx+1]
-                        result = parse_message(complete_msg)
-                        if result:
-                            handle_received_message(result)
-                        # Remove processed message from buffer
-                        del buffer[:end_idx+1]
-                    else:
-                        # ETX not found yet, wait for more data
-                        break
-                else:
-                    # STX not found, remove data before current position
-                    del buffer[:]
-                    break
-        else:
-            # No data, sleep for a short time to yield control
+        byte = ser.read(1)
+        if not byte:
+            # No data received, sleep briefly
             time.sleep(0.01)
-        # Check for incomplete message without ETX
-        if len(buffer) > 0 and ETX not in buffer:
-            try:
-                ascii_msg = ''.join([chr(b) if chr(b) in string.printable else '.' for b in buffer])
-                print(f"Incomplete message received: {ascii_msg}")
-            except UnicodeDecodeError:
-                print("Incomplete message received: Unable to decode as ASCII")
-            # Clear the buffer after printing
-            buffer.clear()
+            continue
+        b = byte[0]
+
+        # Handle escaping
+        if escape_next:
+            b ^= 0x20
+            escape_next = False
+        elif b == ESC:
+            escape_next = True
+            continue  # Get the next byte
+
+        # State machine
+        if state == STATE_WAIT_FOR_STX:
+            if b == STX:
+                state = STATE_READ_TYPE
+                checksum = 0
+                payload.clear()
+        elif state == STATE_READ_TYPE:
+            message_type = b
+            checksum ^= b
+            state = STATE_READ_LENGTH
+        elif state == STATE_READ_LENGTH:
+            payload_length = b
+            checksum ^= b
+            if payload_length == 0:
+                state = STATE_READ_CHECKSUM  # No payload to read
+        elif state == STATE_READ_PAYLOAD:
+            payload.append(b)
+            checksum ^= b
+            if len(payload) == payload_length:
+                state = STATE_READ_CHECKSUM
+        elif state == STATE_READ_CHECKSUM:
+            received_checksum = b
+            if checksum == received_checksum:
+                state = STATE_WAIT_FOR_ETX
+            else:
+                print("Checksum mismatch")
+                state = STATE_WAIT_FOR_STX
+        elif state == STATE_WAIT_FOR_ETX:
+            if b == ETX:
+                # Assemble the message and handle it
+                message = {
+                    'message_type': message_type,
+                    'payload': bytes(payload)
+                }
+                handle_received_message(message)
+            else:
+                print("Invalid ETX")
+            state = STATE_WAIT_FOR_STX  # Reset for next message
+        else:
+            state = STATE_WAIT_FOR_STX  # Reset on any unexpected state
 
 def handle_received_message(message):
     if message['message_type'] == MSG_TYPE_TELEMETRY:
@@ -134,9 +132,7 @@ def handle_received_message(message):
     else:
         print(f"Unknown message type: 0x{message['message_type']:02X}")
 
-
 def main():
-    # Initialize serial port with additional parameters
     try:
         ser = serial.Serial(
             SERIAL_PORT,
@@ -150,44 +146,49 @@ def main():
         print(f"Could not open serial port {SERIAL_PORT}: {e}")
         sys.exit(1)
 
-    threading.Thread(target=read_from_port, args=(ser,), daemon=True).start()
+    threading.Thread(target=parse_message_stream, args=(ser,), daemon=True).start()
 
     print("Serial communication started. Type 'help' for commands.")
 
     while True:
-        user_input = input("Enter command: ").strip()
-        if user_input.lower() == 'exit':
-            print("Exiting...")
+        try:
+            user_input = input("Enter command: ").strip()
+            if user_input.lower() == 'exit':
+                print("Exiting...")
+                ser.close()
+                sys.exit(0)
+            elif user_input.lower() == 'help':
+                print("Available commands:")
+                print("  sendcmd <data>   - Send command with payload data in hex (e.g., sendcmd 01 02 03)")
+                print("  gettelemetry     - Request telemetry data")
+                print("  exit             - Exit the application")
+            elif user_input.lower().startswith('sendcmd'):
+                parts = user_input.split()
+                if len(parts) < 2:
+                    print("Usage: sendcmd <data>")
+                    continue
+                try:
+                    payload = bytes(int(byte, 16) for byte in parts[1:])
+                    message = build_message(MSG_TYPE_COMMAND, payload)
+                    ser.write(message)
+                    print(f"Sent command: {' '.join(f'0x{b:02X}' for b in message)}")
+                except ValueError:
+                    print("Invalid payload data. Use hex values separated by spaces.")
+                except serial.SerialTimeoutException:
+                    print("Write operation timed out. Is the serial device connected?")
+                except serial.SerialException as e:
+                    print(f"Serial write error: {e}")
+            elif user_input.lower() == 'gettelemetry':
+                payload = bytes()  # Empty payload
+                message = build_message(MSG_TYPE_TELEMETRY, payload)
+                ser.write(message)
+                print(f"Sent telemetry request: {' '.join(f'0x{b:02X}' for b in message)}")
+            else:
+                print("Unknown command. Type 'help' for available commands.")
+        except KeyboardInterrupt:
+            print("\nExiting...")
             ser.close()
             sys.exit(0)
-        elif user_input.lower() == 'help':
-            print("Available commands:")
-            print("  sendcmd <data>   - Send command with payload data in hex (e.g., sendcmd 01 02 03)")
-            print("  gettelemetry     - Request telemetry data")
-            print("  exit             - Exit the application")
-        elif user_input.lower().startswith('sendcmd'):
-            parts = user_input.split()
-            if len(parts) < 2:
-                print("Usage: sendcmd <data>")
-                continue
-            try:
-                payload = bytes(int(byte, 16) for byte in parts[1:])
-                message = build_message(MSG_TYPE_COMMAND, payload)
-                ser.write(message)
-                print(f"Sent command: {' '.join(f'0x{b:02X}' for b in message)}")
-            except ValueError:
-                print("Invalid payload data. Use hex values separated by spaces.")
-            except serial.SerialTimeoutException:
-                print("Write operation timed out. Is the serial device connected?")
-            except serial.SerialException as e:
-                print(f"Serial write error: {e}")
-        elif user_input.lower() == 'gettelemetry':
-            payload = bytes()  # Empty payload
-            message = build_message(MSG_TYPE_TELEMETRY, payload)
-            ser.write(message)
-            print(f"Sent telemetry request: {' '.join(f'0x{b:02X}' for b in message)}")
-        else:
-            print("Unknown command. Type 'help' for available commands.")
 
 if __name__ == '__main__':
     main()

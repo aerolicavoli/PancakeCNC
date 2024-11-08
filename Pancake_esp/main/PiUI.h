@@ -17,6 +17,7 @@
 
 #define STX                  0x02  // Start delimiter
 #define ETX                  0x03  // End delimiter
+#define ESC                  0x10  // Escape character
 
 // Message Types
 #define MSG_TYPE_COMMAND     0x01
