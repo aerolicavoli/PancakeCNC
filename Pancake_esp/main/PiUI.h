@@ -25,7 +25,7 @@
 #define MSG_TYPE_LOG         0x03
 
 #define UART_BAUD_RATE 9600
-#define UART_BUF_SIZE 1024
+#define UART_BUF_SIZE 256
 
 static const char *TAG = "SerialCommHandler";
 

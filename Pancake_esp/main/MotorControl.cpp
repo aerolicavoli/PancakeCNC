@@ -45,7 +45,7 @@ void MotorControlTask( void *Parameters )
     unsigned int motorUpdatePeriod_Ticks = pdMS_TO_TICKS(MOTOR_CONTROL_PERIOD_MS);
 
     // 1hz motor loging
-    unsigned int reportPeriod_frames = 100;
+    unsigned int reportPeriod_frames = 1000;
 
     unsigned int frameNum = 0;
    // CNCMode currentMode = E_STOPPED;
