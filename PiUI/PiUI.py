@@ -12,6 +12,7 @@ BAUD_RATE = 9600
 # Protocol constants
 STX = 0x02
 ETX = 0x03
+ESC = 0x10
 
 # Message types
 MSG_TYPE_COMMAND = 0x01
@@ -47,21 +48,38 @@ def parse_message(data):
     message_type = data[1]
     payload_length = data[2]
 
-    if payload_length != len(data) - 5:
-        print("Payload length mismatch")
-        return None
+    payload = []
+    index = 3
+    end_index = len(data) - 2  # Exclude checksum and ETX
+    checksum = 0
 
-    payload = data[3:3+payload_length]
-    checksum = data[-2]
+    while index < end_index:
+        byte = data[index]
+        index += 1
+        if byte == ESC:
+            if index >= end_index:
+                print("Incomplete escape sequence")
+                return None
+            next_byte = data[index] ^ 0x20
+            index += 1
+            payload.append(next_byte)
+            checksum ^= next_byte
+        else:
+            payload.append(byte)
+            checksum ^= byte
 
-    if calculate_checksum(payload) != checksum:
+    calculated_checksum = checksum
+    received_checksum = data[-2]
+
+    if calculated_checksum != received_checksum:
         print("Checksum mismatch")
         return None
 
     return {
         'message_type': message_type,
-        'payload': payload
+        'payload': bytes(payload)
     }
+
 
 def read_from_port(ser):
     buffer = bytearray()

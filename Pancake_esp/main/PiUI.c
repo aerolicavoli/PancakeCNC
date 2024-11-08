@@ -34,25 +34,31 @@ static int uart_vprintf(const char *str, va_list args) {
     char log_buffer[256];
     int len = vsnprintf(log_buffer, sizeof(log_buffer), str, args);
     if (len > 0) {
-        // Now, package the log message into a protocol message and send it over UART.
-        // Build the protocol message.
         uint8_t message_buffer[512];
         size_t index = 0;
+
         // Start Delimiter
         message_buffer[index++] = STX;
         // Message Type
         message_buffer[index++] = MSG_TYPE_LOG;
-        // Payload Length (limit to 255)
-        uint8_t payload_length = (len > 255) ? 255 : len;
-        message_buffer[index++] = payload_length;
-        // Payload
-        memcpy(&message_buffer[index], log_buffer, payload_length);
-        index += payload_length;
-        // Checksum
+        // Placeholder for Payload Length (will update later)
+        size_t payload_length_index = index++;
+        // Payload with Escaping
         uint8_t checksum = 0;
-        for (int i = 0; i < payload_length; i++) {
-            checksum ^= log_buffer[i];
+        for (int i = 0; i < len; i++) {
+            uint8_t byte = log_buffer[i];
+            checksum ^= byte;
+            if (byte == STX || byte == ETX || byte == ESC) {
+                message_buffer[index++] = ESC;
+                message_buffer[index++] = byte ^ 0x20;
+            } else {
+                message_buffer[index++] = byte;
+            }
         }
+        // Payload Length
+        uint8_t payload_length = index - payload_length_index - 1;
+        message_buffer[payload_length_index] = payload_length;
+        // Checksum
         message_buffer[index++] = checksum;
         // End Delimiter
         message_buffer[index++] = ETX;
@@ -61,6 +67,7 @@ static int uart_vprintf(const char *str, va_list args) {
     }
     return len;
 }
+
 
 
 
