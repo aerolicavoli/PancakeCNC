@@ -1,5 +1,12 @@
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #ifndef PIUI_H
 #define PIUI_H
+
+
 
 #include "GPIOAssignments.h"
 #include "defines.h"
@@ -35,13 +42,42 @@ typedef struct {
     uint8_t payload[256];  // Adjust size as needed
 } parsed_message_t;
 
+typedef struct __attribute__((packed)) {
+    int32_t Speed_degps;
+    int32_t Position_deg;
+    // Add more telemetry fields as needed
+} motor_tlm_t;
+
+typedef struct __attribute__((packed)) {
+    motor_tlm_t PumpMotorTlm;
+    motor_tlm_t S0MotorTlm;
+    motor_tlm_t S1MotorTlm;
+    float temp_F;
+    bool S0LimitSwitch;
+    bool S1LimitSwitch;
+    float tipPos_X_m; 
+    float tipPos_Y_m; 
+    // Add more telemetry fields as needed
+} telemetry_data_t;
+
+
+// Global telemetry data
+static telemetry_data_t telemetry_data;
+
+// Mutex to protect access to telemetry data
+static SemaphoreHandle_t telemetry_mutex;
+
 void PiUIInit();
 void PiUIStart();
 void SerialCommunicationTask(void *pvParameters);
+void send_protocol_message(uint8_t message_type, const uint8_t *payload, size_t payload_length);
 bool parse_message(const uint8_t *data, size_t length, parsed_message_t *message);
 void route_message(const parsed_message_t *message);
 void send_telemetry_data(const uint8_t *data, size_t length);
+void telemetry_provider_handle_request();
 
 #endif // PIUI_H
 
-
+#ifdef __cplusplus
+}
+#endif

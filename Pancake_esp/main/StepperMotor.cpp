@@ -98,6 +98,16 @@ bool IRAM_ATTR StepperMotor::onStepTimerCallback(gptimer_handle_t timer,
     return false;
 }
 
+void StepperMotor::GetTlm(motor_tlm_t *Tlm)
+{
+    portENTER_CRITICAL(&mux);
+    int32_t steps = stepCount;
+    portEXIT_CRITICAL(&mux);
+
+    Tlm->Position_deg = steps * StepSize_deg;
+    Tlm->Speed_degps = CurrentSpeed_degps;
+}
+
 // Update the motor pulse freq
 void StepperMotor::UpdateSpeed() {
 

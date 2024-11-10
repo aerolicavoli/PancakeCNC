@@ -16,66 +16,20 @@ Write software for the Serial Communication Handler.
 
 #include "PiUI.h"
 
-/*
-// UART write function for ESP-IDF logging
-static int uart_vprintf(const char *str, va_list args) {
-    char buffer[256];
-    int len = vsnprintf(buffer, sizeof(buffer), str, args);
-    if (len > 0)
-    {
-        uart_write_bytes(UART_NUM, buffer, len);
-    }
-    return len;
-}
-*/
+
+
 
 // UART write function for ESP-IDF logging
 static int uart_vprintf(const char *str, va_list args) {
     char log_buffer[256];
     int len = vsnprintf(log_buffer, sizeof(log_buffer), str, args);
-    if (len > 0) {
-        uint8_t message_buffer[512];
-        size_t index = 0;
-
-        // Start Delimiter
-        message_buffer[index++] = STX;
-        // Message Type
-        message_buffer[index++] = MSG_TYPE_LOG;
-        // Placeholder for Payload Length (will update later)
-        size_t payload_length_index = index++;
-        // Payload with Escaping
-        uint8_t checksum = 0;
-        for (int i = 0; i < len; i++) {
-            uint8_t byte = log_buffer[i];
-            checksum ^= byte;
-            if (byte == STX || byte == ETX || byte == ESC) {
-                message_buffer[index++] = ESC;
-                message_buffer[index++] = byte ^ 0x20;
-            } else {
-                message_buffer[index++] = byte;
-            }
-        }
-        // Payload Length
-        uint8_t payload_length = index - payload_length_index - 1;
-        message_buffer[payload_length_index] = payload_length;
-        // Checksum
-        message_buffer[index++] = checksum;
-        // End Delimiter
-        message_buffer[index++] = ETX;
-        // Send the message over UART
-        uart_write_bytes(UART_NUM, (const char *)message_buffer, index);
+    if (len > 0) 
+    {
+        size_t payload_length = (len < sizeof(log_buffer)) ? len : sizeof(log_buffer) - 1;
+        send_protocol_message(MSG_TYPE_LOG, (uint8_t *)log_buffer, payload_length);
     }
     return len;
 }
-
-
-
-
-
-
-
-
-
 
 
 void PiUIInit()
@@ -193,7 +147,7 @@ void route_message(const parsed_message_t *message)
 
         case MSG_TYPE_TELEMETRY:
             // Route to Telemetry Provider
-            // telemetry_provider_handle_request(message->payload, message->payload_length);
+            telemetry_provider_handle_request();
             ESP_LOGI(TAG, "Telemetry request received");
             break;
 
@@ -227,3 +181,56 @@ void send_telemetry_data(const uint8_t *data, size_t length)
     uart_write_bytes(UART_NUM, (const char *)buffer, index);
 }
 
+
+// Update your telemetry provider function
+void send_protocol_message(uint8_t message_type, const uint8_t *payload, size_t payload_length) {
+    uint8_t buffer[512];
+    size_t index = 0;
+
+    // Start Delimiter
+    buffer[index++] = STX;
+    // Message Type
+    buffer[index++] = message_type;
+    // Payload Length (limit to 255)
+    uint8_t length = (payload_length > 255) ? 255 : payload_length;
+    buffer[index++] = length;
+
+    // Payload with escaping
+    uint8_t checksum = 0;
+    for (size_t i = 0; i < length; i++) {
+        uint8_t byte = payload[i];
+        checksum ^= byte;
+        if (byte == STX || byte == ETX || byte == ESC) {
+            buffer[index++] = ESC;
+            buffer[index++] = byte ^ 0x20;
+        } else {
+            buffer[index++] = byte;
+        }
+    }
+
+    // Checksum
+    buffer[index++] = checksum;
+    // End Delimiter
+    buffer[index++] = ETX;
+
+    // Send the buffer
+    uart_write_bytes(UART_NUM, (const char *)buffer, index);
+}
+
+void telemetry_provider_handle_request() {
+    telemetry_data_t current_telemetry;
+
+    // Acquire the mutex before accessing shared data
+    if (xSemaphoreTake(telemetry_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        // Copy the telemetry data
+        current_telemetry = telemetry_data;
+        // Release the mutex
+        xSemaphoreGive(telemetry_mutex);
+    } else {
+        ESP_LOGW(TAG, "Failed to acquire telemetry mutex");
+        return;
+    }
+
+    // Send the telemetry data
+    send_protocol_message(MSG_TYPE_TELEMETRY, (uint8_t *)&current_telemetry, sizeof(telemetry_data_t));
+}

@@ -9,6 +9,12 @@
 #include "GPIOAssignments.h"
 #include "StepperMotor.h"
 #include "esp_log.h"
+#include "PiUI.h"
+#include <cmath>
+
+#define C_DEGToRAD 0.01745329251
+#define C_S0Length_m 0.1963
+#define C_S1Length_m 0.1563
 
 void MotorControlInit();
 void MotorControlStart();

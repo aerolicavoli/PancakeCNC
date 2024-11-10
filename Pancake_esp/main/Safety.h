@@ -8,9 +8,11 @@
 #include "esp_attr.h"
 #include "esp_log.h"
 #include "GPIOAssignments.h"
+#include "PiUI.h"
 
 void SafetyInit();
 void SafetyStart();
 void SafetyTask( void *Parameters );
-
+void EnableMotors();
+void SetLimitSwitchPolicy(bool HardStopOnLimit);
 #endif // SAFETY_H

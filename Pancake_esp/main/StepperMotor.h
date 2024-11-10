@@ -13,7 +13,7 @@
 
 #include "esp_log.h"
 #include "esp_system.h"
-
+#include "PiUI.h"
 
 class StepperMotor {
 public:
@@ -35,6 +35,8 @@ public:
 
     // Motor name for logging
     const char* name;
+
+    void GetTlm(motor_tlm_t *Tlm);
 
 private:
     // GPIO pins
