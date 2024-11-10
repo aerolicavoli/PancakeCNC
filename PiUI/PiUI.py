@@ -3,6 +3,8 @@ import threading
 import sys
 import time
 import string
+import struct
+
 
 # Serial port configuration
 SERIAL_PORT = '/dev/ttys0'  # Mac
@@ -118,13 +120,23 @@ def parse_message_stream(ser):
         else:
             state = STATE_WAIT_FOR_STX  # Reset on any unexpected state
 
+
+# Update your handle_received_message function
 def handle_received_message(message):
     if message['message_type'] == MSG_TYPE_TELEMETRY:
         payload = message['payload']
-        # Process telemetry data
-        print("Telemetry Data Received:")
-        print(" ".join(f"0x{byte:02X}" for byte in payload))
+        # Unpack the telemetry data
+        telemetry_format = '<ffi'  # Little-endian: float, float, int32
+        if len(payload) == struct.calcsize(telemetry_format):
+            temperature, voltage, motor_speed = struct.unpack(telemetry_format, payload)
+            print(f"Telemetry Data Received:")
+            print(f"Temperature: {temperature:.2f} °C")
+            print(f"Voltage: {voltage:.2f} V")
+            print(f"Motor Speed: {motor_speed} RPM")
+        else:
+            print("Invalid telemetry data length")
     elif message['message_type'] == MSG_TYPE_LOG:
+        # Existing log message handling
         payload = message['payload']
         try:
             log_msg = payload.decode('utf-8', errors='replace')
@@ -133,6 +145,12 @@ def handle_received_message(message):
             print("Received invalid log message data.")
     else:
         print(f"Unknown message type: 0x{message['message_type']:02X}")
+
+
+
+
+
+
 
 def main():
     try:

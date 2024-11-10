@@ -19,7 +19,7 @@
 extern "C" {
 
 #include "Safety.h"
-#include "PiUi.h"
+#include "PiUI.h"
 
     void app_main(void) {
         // Initialize the tasks
