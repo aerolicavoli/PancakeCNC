@@ -16,7 +16,7 @@ Write software for the Serial Communication Handler.
 
 #include "PiUI.h"
 
-const char *TAG = "SerialCommHandler";
+static const char *TAG = "SerialCommHandler";
 
 QueueHandle_t cnc_command_queue = NULL;  // Define the queue
 
