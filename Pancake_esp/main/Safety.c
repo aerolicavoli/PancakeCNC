@@ -14,6 +14,17 @@ void SafetyInit()
     gpio_reset_pin(PUMP_MOTOR_ENABLE);
     gpio_set_direction(PUMP_MOTOR_ENABLE, GPIO_MODE_OUTPUT);
 
+
+    // Configure the limit switch pin as an input
+    gpio_config_t io_conf = {
+        .pin_bit_mask = ((1ULL << S0_LIMIT_SWITCH) | (1ULL << S1_LIMIT_SWITCH)),   // Bit mask of the pins to set
+        .mode = GPIO_MODE_INPUT,              // Set as input mode
+        .pull_up_en = GPIO_PULLUP_DISABLE,    // Disable pull-up resistor
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,// Disable pull-down resistor
+        .intr_type = GPIO_INTR_DISABLE        // Disable interrupts
+    };
+    gpio_config(&io_conf);
+
 }
 
 void SafetyStart()
@@ -38,8 +49,8 @@ void SafetyTask( void *Parameters )
     for( ;; )
     {
         // Read limit switch settings
-        s0Lim = false; // TODO
-        s1Lim = false; // TODO
+        s0Lim = gpio_get_level(S0_LIMIT_SWITCH);
+        s1Lim = gpio_get_level(S1_LIMIT_SWITCH);
 
         // Make shutdown decisions
         if (hardStopOnLimitSwitch && (s0Lim || s1Lim))

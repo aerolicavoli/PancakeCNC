@@ -23,5 +23,8 @@
 #define UART_TX_PIN 11
 #define UART_RX_PIN 13
 
+// UI and limit switches
+#define S0_LIMIT_SWITCH GPIO_NUM_16
+#define S1_LIMIT_SWITCH GPIO_NUM_15
 
 #endif // GPIOAssignments
