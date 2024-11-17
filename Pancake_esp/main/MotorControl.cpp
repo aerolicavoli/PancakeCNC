@@ -1,14 +1,24 @@
 #include "MotorControl.h"
 
-#define MOTOR_CONTROL_PERIOD_MS 10
-//QueueHandle_t CNCCommandQueue;
-//QueueHandle_t CNCPathQueue;
+const char *TAG = "CNCControl";
 
-// Create motor instances  
+bool CNCEnabled = false;
+
+#define MOTOR_CONTROL_PERIOD_MS 10
+// QueueHandle_t CNCCommandQueue;
+// QueueHandle_t CNCPathQueue;
+
+// Create motor instances
 // Step size = gear ratio * motor step size / micro step reduction
-static StepperMotor S0Motor(S0_MOTOR_PULSE, S0_MOTOR_DIR,200.0, 0.14814 * 0.9 / 4.0, "S0MOTOR");
+static StepperMotor S0Motor(S0_MOTOR_PULSE, S0_MOTOR_DIR, 200.0, 0.14814 * 0.9 / 4.0, "S0MOTOR");
 static StepperMotor S1Motor(S1_MOTOR_PULSE, S1_MOTOR_DIR, 200.0, 0.4166 * 0.9 / 4.0, "S1MOTOR");
-static StepperMotor PumpMotor(PUMP_MOTOR_PULSE, PUMP_MOTOR_DIR, 200.0, 0.9/4.0, "PUMPMOTOR");
+static StepperMotor PumpMotor(PUMP_MOTOR_PULSE, PUMP_MOTOR_DIR, 200.0, 0.9 / 4.0, "PUMPMOTOR");
+
+// Motor control functions
+void start_motor();
+void stop_motor();
+
+motor_command_t command;
 
 void MotorControlInit()
 {
@@ -23,22 +33,11 @@ void MotorControlInit()
     S0Motor.InitializeTimers(MOTOR_CONTROL_PERIOD_MS);
     S1Motor.InitializeTimers(MOTOR_CONTROL_PERIOD_MS);
     PumpMotor.InitializeTimers(MOTOR_CONTROL_PERIOD_MS);
-
-    //CNCCommandQueue = xQueueCreate(10, sizeof(uint32_t));
-
 }
 
-void MotorControlStart()
-{
-    xTaskCreate(MotorControlTask,
-                 "MotorControl",
-                 4096,
-                 NULL,
-                 1,
-                 NULL);
-}
+void MotorControlStart() { xTaskCreate(MotorControlTask, TAG, 4096, NULL, 1, NULL); }
 
-void MotorControlTask( void *Parameters )
+void MotorControlTask(void *Parameters)
 {
     // 100hz motor control loop
     unsigned int motorUpdatePeriod_Ticks = pdMS_TO_TICKS(MOTOR_CONTROL_PERIOD_MS);
@@ -47,15 +46,17 @@ void MotorControlTask( void *Parameters )
     unsigned int reportPeriod_frames = 1000;
 
     unsigned int frameNum = 0;
-   // CNCMode currentMode = E_STOPPED;
-    
+    // CNCMode currentMode = E_STOPPED;
+
     float phi_rad, theta_rad, sp, cp, st, ct, pos_X_m, pos_Y_m;
     motor_tlm_t localS0Tlm;
     motor_tlm_t localS1Tlm;
     motor_tlm_t localPumpTlm;
-    
-    for( ;; )
+
+    for (;;)
     {
+        HandleCommandQueue();
+
         // Copy local tlm
         PumpMotor.GetTlm(&localPumpTlm);
         S0Motor.GetTlm(&localS0Tlm);
@@ -69,18 +70,32 @@ void MotorControlTask( void *Parameters )
         ct = cos(theta_rad);
         st = sin(theta_rad);
 
-        pos_X_m = st * C_S0Length_m + sp * C_S1Length_m; 
+        pos_X_m = st * C_S0Length_m + sp * C_S1Length_m;
         pos_Y_m = ct * C_S0Length_m + cp * C_S1Length_m;
 
         // Command Speed
-        S0Motor.setTargetSpeed(100); // Hz
-        S1Motor.setTargetSpeed(200); // Hz
-        PumpMotor.setTargetSpeed(3600.0); // Hz
+        if (CNCEnabled)
+        {
+            S0Motor.setTargetSpeed(100.0);
+            S1Motor.setTargetSpeed(200.0);
+            PumpMotor.setTargetSpeed(3600.0);
 
-        // Process speed updates
-        S0Motor.UpdateSpeed();
-        S1Motor.UpdateSpeed(); 
-        PumpMotor.UpdateSpeed();
+            // Process speed updates and don't force the speed change
+            S0Motor.UpdateSpeed(false);
+            S1Motor.UpdateSpeed(false);
+            PumpMotor.UpdateSpeed(false);
+        }
+        else
+        {
+            S0Motor.setTargetSpeed(0.0);
+            S1Motor.setTargetSpeed(0.0);
+            PumpMotor.setTargetSpeed(0.0);
+
+            // Process speed updates and force the speed change
+            S0Motor.UpdateSpeed(true);
+            S1Motor.UpdateSpeed(true);
+            PumpMotor.UpdateSpeed(true);
+        }
 
         // Acquire the mutex before updating shared data
         if (xSemaphoreTake(telemetry_mutex, pdMS_TO_TICKS(100)) == pdTRUE)
@@ -91,11 +106,32 @@ void MotorControlTask( void *Parameters )
 
             telemetry_data.tipPos_X_m = pos_X_m;
             telemetry_data.tipPos_Y_m = pos_Y_m;
-            
+
+            // Read the limit switch switch and adjust inhibits
+            if (telemetry_data.S0LimitSwitch)
+            {
+                S0Motor.SetDirectionalInhibit(StepperMotor::E_INHIBIT_FORWARD);
+            }
+            else
+            {
+                S0Motor.SetDirectionalInhibit(StepperMotor::E_NO_INHIBIT);
+            }
+
+            if (telemetry_data.S1LimitSwitch)
+            {
+                S1Motor.SetDirectionalInhibit(StepperMotor::E_INHIBIT_FORWARD);
+            }
+            else
+            {
+                S1Motor.SetDirectionalInhibit(StepperMotor::E_NO_INHIBIT);
+            }
+
             // Release the mutex
             xSemaphoreGive(telemetry_mutex);
-        } else {
-            ESP_LOGW("MotorControl", "Failed to acquire telemetry mutex");
+        }
+        else
+        {
+            ESP_LOGW(TAG, "Failed to acquire telemetry mutex");
         }
 
         if ((frameNum % reportPeriod_frames) == 0)
@@ -106,4 +142,45 @@ void MotorControlTask( void *Parameters )
         vTaskDelay(motorUpdatePeriod_Ticks);
         frameNum++;
     }
+}
+
+void HandleCommandQueue(void)
+{
+    if (xQueueReceive(cnc_command_queue, &command, 0) == pdPASS)
+    {
+        switch (command.cmd_type)
+        {
+            case MOTOR_CMD_START:
+                ESP_LOGI(TAG, "Starting motor");
+                start_motor();
+                break;
+
+            case MOTOR_CMD_STOP:
+                ESP_LOGI(TAG, "Stopping motor");
+                stop_motor();
+                break;
+
+            default:
+                ESP_LOGW(TAG, "Unknown command received");
+                break;
+        }
+    }
+}
+
+// Implementations of motor control functions
+void start_motor() { CNCEnabled = true; }
+
+void stop_motor()
+{
+    CNCEnabled = false;
+
+    // Command Speed
+    S0Motor.setTargetSpeed(0.0);
+    S1Motor.setTargetSpeed(0.0);
+    PumpMotor.setTargetSpeed(0.0);
+
+    // Process speed updates
+    S0Motor.UpdateSpeed(true);
+    S1Motor.UpdateSpeed(true);
+    PumpMotor.UpdateSpeed(true);
 }

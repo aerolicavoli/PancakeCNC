@@ -58,6 +58,10 @@ void SafetyTask( void *Parameters )
             gpio_set_level(PUMP_MOTOR_ENABLE, false);
             gpio_set_level(PUMP_MOTOR_ENABLE, false);
         }
+        else if (false)
+        {
+            // TODO
+        }
 
         // Control the alive light
         unsigned int frameMod = frameNum % alivePeriod;

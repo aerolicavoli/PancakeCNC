@@ -1,15 +1,15 @@
 #ifndef MOTORCONTROL_H
 #define MOTORCONTROL_H
 
+#include "GPIOAssignments.h"
+#include "PiUI.h"
+#include "StepperMotor.h"
 #include "defines.h"
-#include "freertos/FreeRTOS.h"
-#include "esp_types.h"
 #include "esp_attr.h"
 #include "esp_log.h"
-#include "GPIOAssignments.h"
-#include "StepperMotor.h"
-#include "esp_log.h"
-#include "PiUI.h"
+#include "esp_types.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include <cmath>
 
 #define C_DEGToRAD 0.01745329251
@@ -18,8 +18,8 @@
 
 void MotorControlInit();
 void MotorControlStart();
-void MotorControlTask( void *Parameters );
-
+void MotorControlTask(void *Parameters);
+void HandleCommandQueue(void);
 
 enum CNCMode
 {
