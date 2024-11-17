@@ -1,0 +1,10 @@
+# .clang-format
+
+BasedOnStyle: LLVM
+IndentWidth: 4
+BreakBeforeBraces: Allman
+AlignAfterOpenBracket: Align
+ColumnLimit: 100
+SortIncludes: true
+IndentCaseLabels: true
+ReflowComments: true

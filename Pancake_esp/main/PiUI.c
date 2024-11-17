@@ -16,7 +16,9 @@ Write software for the Serial Communication Handler.
 
 #include "PiUI.h"
 
+const char *TAG = "SerialCommHandler";
 
+QueueHandle_t cnc_command_queue = NULL;  // Define the queue
 
 
 // UART write function for ESP-IDF logging
@@ -30,7 +32,6 @@ static int uart_vprintf(const char *str, va_list args) {
     }
     return len;
 }
-
 
 void PiUIInit()
 {
@@ -50,9 +51,17 @@ void PiUIInit()
     esp_log_set_vprintf(uart_vprintf);
 
     // Test logging
-    ESP_LOGI("UART_LOG", "UART Initialized");
+    ESP_LOGI(TAG, "UART Initialized");
 
-    vTaskDelay(pdMS_TO_TICKS(1000));  // Adjust delay as needed
+        // Create the command queue
+    cnc_command_queue = xQueueCreate(CNC_COMMAND_QUEUE_LENGTH, sizeof(motor_command_t));
+    if (cnc_command_queue == NULL)
+    {
+        // Handle error: Failed to create queue
+        ESP_LOGE(TAG, "Failed to create CNC command queue");
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(1000));  // Wait for coms to init
 
 }
 
@@ -138,11 +147,29 @@ bool parse_message(const uint8_t *data, size_t length, parsed_message_t *message
 
 void route_message(const parsed_message_t *message)
 {
+    motor_command_t commandStruct;
     switch (message->message_type) {
         case MSG_TYPE_COMMAND:
-            // Route to Command Processor
-            // command_processor_enqueue(message->payload, message->payload_length);
-            ESP_LOGI(TAG, "Command message received");
+            // Handle the command
+            switch (message->payload_length)
+            {
+                case 3:
+                    commandStruct.arg_2 = message->payload[2];
+                    // Intentional fall through
+                case 2:
+                    commandStruct.arg_1 = message->payload[1];
+                    // Intentional fall through
+                case 1:
+                    commandStruct.cmd_type = message->payload[0];
+                    xQueueSend(cnc_command_queue, &commandStruct, portMAX_DELAY);
+                    ESP_LOGI(TAG, "Command message received");
+
+                    break;
+                default:
+                    ESP_LOGW(TAG, "Command message with incorrect payload size: %d", message->payload_length);
+            
+            }
+
             break;
 
         case MSG_TYPE_TELEMETRY:
@@ -155,30 +182,6 @@ void route_message(const parsed_message_t *message)
             ESP_LOGW(TAG, "Unknown message type: 0x%02X", message->message_type);
             break;
     }
-}
-
-void send_telemetry_data(const uint8_t *data, size_t length)
-{
-    uint8_t buffer[512];
-    size_t index = 0;
-
-    buffer[index++] = STX;
-    buffer[index++] = MSG_TYPE_TELEMETRY;
-    buffer[index++] = (uint8_t)length;
-
-    memcpy(&buffer[index], data, length);
-    index += length;
-
-    // Calculate checksum
-    uint8_t checksum = 0;
-    for (int i = 0; i < length; i++) {
-        checksum ^= data[i];
-    }
-    buffer[index++] = checksum;
-
-    buffer[index++] = ETX;
-
-    uart_write_bytes(UART_NUM, (const char *)buffer, index);
 }
 
 
