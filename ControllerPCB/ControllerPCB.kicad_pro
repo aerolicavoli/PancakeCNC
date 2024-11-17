@@ -37,7 +37,7 @@
         "other_text_thickness": 0.15,
         "other_text_upright": false,
         "pads": {
-          "drill": 3.2,
+          "drill": 2.75,
           "height": 3.2,
           "width": 3.2
         },
@@ -51,8 +51,22 @@
           "min_clearance": 0.5
         }
       },
-      "diff_pair_dimensions": [],
-      "drc_exclusions": [],
+      "diff_pair_dimensions": [
+        {
+          "gap": 0.0,
+          "via_gap": 0.0,
+          "width": 0.0
+        }
+      ],
+      "drc_exclusions": [
+        "lib_footprint_mismatch|32241239|108316037|fd316ad6-c68f-4f06-aea4-600f8b7970ea|00000000-0000-0000-0000-000000000000",
+        "lib_footprint_mismatch|32241239|50316037|721446df-d874-4529-8b91-83e086a9b0f7|00000000-0000-0000-0000-000000000000",
+        "lib_footprint_mismatch|40401643|129102442|a099083b-4b11-44ce-bd4b-31ad31ead454|00000000-0000-0000-0000-000000000000",
+        "lib_footprint_mismatch|81241239|108316037|8d0ad334-1cbe-42a7-a7f9-811caa51695f|00000000-0000-0000-0000-000000000000",
+        "lib_footprint_mismatch|81241239|50316037|f3c022e2-f827-4b8c-8fec-f4492e370e2c|00000000-0000-0000-0000-000000000000",
+        "silk_edge_clearance|49511239|131316037|9778a0bb-6e14-4d41-a4e8-aad78783bce4|03d5807d-e0cc-4f7b-a90b-24abc8d10bb2",
+        "silk_edge_clearance|80321239|131316037|9778a0bb-6e14-4d41-a4e8-aad78783bce4|599332d8-14ca-4eec-9edc-0af628b629fe"
+      ],
       "meta": {
         "version": 2
       },
@@ -121,7 +135,7 @@
         "min_silk_clearance": 0.0,
         "min_text_height": 0.8,
         "min_text_thickness": 0.08,
-        "min_through_hole_diameter": 0.3,
+        "min_through_hole_diameter": 0.2,
         "min_track_width": 0.0,
         "min_via_annular_width": 0.1,
         "min_via_diameter": 0.5,
@@ -171,7 +185,9 @@
           "td_width_to_size_filter_ratio": 0.9
         }
       ],
-      "track_widths": [],
+      "track_widths": [
+        0.0
+      ],
       "tuning_pattern_settings": {
         "diff_pair_defaults": {
           "corner_radius_percentage": 80,
@@ -198,7 +214,12 @@
           "spacing": 0.6
         }
       },
-      "via_dimensions": [],
+      "via_dimensions": [
+        {
+          "diameter": 0.0,
+          "drill": 0.0
+        }
+      ],
       "zones_allow_external_fillets": false
     },
     "ipc2581": {
@@ -471,7 +492,7 @@
       "gencad": "",
       "idf": "",
       "netlist": "",
-      "plot": "GerbAttempt3/",
+      "plot": "grbfiles/",
       "pos_files": "",
       "specctra_dsn": "",
       "step": "",
