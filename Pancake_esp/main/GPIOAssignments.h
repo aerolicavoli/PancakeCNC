@@ -26,8 +26,9 @@
 // UI and limit switches
 #define S0_LIMIT_SWITCH GPIO_NUM_16
 #define S1_LIMIT_SWITCH GPIO_NUM_15
-#define POT_X_CHANNEL ADC1_CHANNEL_0 // GPIO1
-#define POT_Y_CHANNEL ADC1_CHANNEL_1 // GPIO2
-#define TEMP_CHANNEL ADC1_CHANNEL_3 // GPIO3
+
+#define POT_X_CHANNEL ADC_CHANNEL_0 // GPIO1 TODO correct these three
+#define POT_Y_CHANNEL ADC_CHANNEL_1 // GPIO2
+#define TEMP_CHANNEL ADC_CHANNEL_2  // GPIO3
 
 #endif // GPIOAssignments
