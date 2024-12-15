@@ -5,6 +5,7 @@
 #include "driver/gpio.h"
 
 #define ALIVE_LED GPIO_NUM_17
+#define ADDRESSABLE_LEDS GPIO_NUM_21
 
 // MOTOR CONTROL
 #define S0_MOTOR_PULSE GPIO_NUM_7
