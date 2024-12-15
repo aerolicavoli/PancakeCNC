@@ -20,7 +20,19 @@ Many, but not all facets of this design are controlled in this repository.
 
 ### CNC Structure
 
-The motors, gearing, and hinge mechanism.
+The motors, gearing, hinge, and pump mechanisms.
+
+#### Printed Parts
+
+Checked into this repository are the following components
+
+- Peristaltic pump components
+  - PumpBase.stl
+  - PumpTop.stl
+  - PumpSpinner.stl
+- Hinge Components
+  - (Not checked in) UpperHinge.stl
+  - (Not checked in) LowerHinge.stl
 
 ### Controller Box
 
