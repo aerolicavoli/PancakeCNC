@@ -5,4 +5,5 @@ idf_component_register(SRCS "GeneralGuidance.cpp" "StepperMotor.cpp"
  "PiUI.c"
  "UI.c"
  "PanMath.cpp"
+ "TlmPublisher.c"
  INCLUDE_DIRS ".")

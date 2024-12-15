@@ -13,6 +13,13 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include <stdio.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "led_strip.h"
+#include "esp_err.h"
+
+
 void UIInit();
 void UIStart();
 void UITask(void *Parameters);

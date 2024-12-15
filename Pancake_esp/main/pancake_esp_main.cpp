@@ -7,6 +7,7 @@ extern "C"
 
 #include "PiUI.h"
 #include "Safety.h"
+#include "TlmPublisher.h"
 #include "UI.h"
 
     void app_main(void)
@@ -17,11 +18,13 @@ extern "C"
         SafetyInit();
         //    MotorControlInit();
         //    UIInit();
+        TlmPublisherInit();
 
         // Start the tasks
         SafetyStart();
         //    MotorControlStart();
         PiUIStart();
         //    UIStart();
+        TlmPublisherStart();
     }
 }
