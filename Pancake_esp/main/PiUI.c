@@ -88,6 +88,8 @@ void SerialCommunicationTask(void *pvParameters)
 
         // UBaseType_t stack_high_water_mark = uxTaskGetStackHighWaterMark(NULL);
         // ESP_LOGI(TAG, "Stack High Water Mark: %u", stack_high_water_mark);
+        
+       // ESP_LOGI(TAG, "Alive");
 
         vTaskDelay(pdMS_TO_TICKS(100)); // Adjust delay as needed
     }

@@ -4,15 +4,17 @@ const char *TAG = "CNCControl";
 
 bool CNCEnabled = false;
 
+static float kp_hz(4.0f);
+
 #define MOTOR_CONTROL_PERIOD_MS 10
-// QueueHandle_t CNCCommandQueue;
-// QueueHandle_t CNCPathQueue;
 
 // Create motor instances
 // Step size = gear ratio * motor step size / micro step reduction
-static StepperMotor S0Motor(S0_MOTOR_PULSE, S0_MOTOR_DIR, 200.0, 0.14814 * 0.9 / 4.0, "S0MOTOR");
-static StepperMotor S1Motor(S1_MOTOR_PULSE, S1_MOTOR_DIR, 200.0, 0.4166 * 0.9 / 4.0, "S1MOTOR");
-static StepperMotor PumpMotor(PUMP_MOTOR_PULSE, PUMP_MOTOR_DIR, 200.0, 0.9 / 4.0, "PUMPMOTOR");
+static StepperMotor S0Motor(S0_MOTOR_PULSE, S0_MOTOR_DIR, 200.0, 200.0, 0.14814 * 0.9 / 4.0,
+                            "S0MOTOR");
+static StepperMotor S1Motor(S1_MOTOR_PULSE, S1_MOTOR_DIR, 200.0, 200.0, 0.4166 * 0.9 / 4.0,
+                            "S1MOTOR");
+static StepperMotor PumpMotor(PUMP_MOTOR_PULSE, PUMP_MOTOR_DIR, 200.0, 200, 0.9 / 4.0, "PUMPMOTOR");
 
 // Motor control functions
 void start_motor();
@@ -48,10 +50,17 @@ void MotorControlTask(void *Parameters)
     unsigned int frameNum = 0;
     // CNCMode currentMode = E_STOPPED;
 
-    float phi_rad, theta_rad, sp, cp, st, ct, pos_X_m, pos_Y_m;
+    float pos_X_m, pos_Y_m, target_X_m, target_Y_m, target_S0_deg, target_S1_deg;
+    pos_X_m = pos_Y_m = target_X_m = target_Y_m = 0.0f;
+    target_S0_deg = target_S1_deg = 0.0f;
+
     motor_tlm_t localS0Tlm;
     motor_tlm_t localS1Tlm;
     motor_tlm_t localPumpTlm;
+
+    // Temp
+    float theta_rd = 0.0;
+    float r_m = 0.0;
 
     for (;;)
     {
@@ -63,21 +72,31 @@ void MotorControlTask(void *Parameters)
         S1Motor.GetTlm(&localS1Tlm);
 
         // Compute current pos vel
-        phi_rad = (localS0Tlm.Position_deg + localS1Tlm.Position_deg) * C_DEGToRAD;
-        theta_rad = localS0Tlm.Position_deg * C_DEGToRAD;
-        cp = cos(phi_rad);
-        sp = sin(phi_rad);
-        ct = cos(theta_rad);
-        st = sin(theta_rad);
+        AngToCart(localS0Tlm.Position_deg, localS1Tlm.Position_deg, pos_X_m, pos_Y_m);
 
-        pos_X_m = st * C_S0Length_m + sp * C_S1Length_m;
-        pos_Y_m = ct * C_S0Length_m + cp * C_S1Length_m;
+        // Get target position this frame
+        // Temporary arceedian spiral
+        r_m = theta_rd * 0.0007;
+        target_X_m = 0.2 + sinf(theta_rd) * r_m;
+        target_Y_m = 0.2 + cosf(theta_rd) * r_m;
+
+        // Stop after a given number of cycles
+        if (theta_rd < M_PI * 2.0 * 5)
+        {
+            theta_rd = theta_rd + 0.001;
+        }
+
+        CartToAng(target_S0_deg, target_S1_deg, target_X_m, target_Y_m);
+
+        // Control motor speed using a simple proportional law.
+        // Possible future work could explicitly or numerically solve for rate commands
+        // given acceleration limitations.
+        S0Motor.setTargetSpeed((target_S0_deg - localS0Tlm.Position_deg) * kp_hz);
+        S1Motor.setTargetSpeed((target_S1_deg - localS1Tlm.Position_deg) * kp_hz);
 
         // Command Speed
         if (CNCEnabled)
         {
-            S0Motor.setTargetSpeed(100.0);
-            S1Motor.setTargetSpeed(200.0);
             PumpMotor.setTargetSpeed(3600.0);
 
             // Process speed updates and don't force the speed change

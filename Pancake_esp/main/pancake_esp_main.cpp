@@ -1,26 +1,27 @@
-#include "defines.h"
-#include "StepperMotor.h"
 #include "MotorControl.h"
+#include "StepperMotor.h"
+#include "defines.h"
 
-extern "C" {
+extern "C"
+{
 
-#include "Safety.h"
 #include "PiUI.h"
+#include "Safety.h"
 #include "UI.h"
 
-    void app_main(void) {
+    void app_main(void)
+    {
         // Initialize the tasks
 
         PiUIInit();
         SafetyInit();
-        MotorControlInit();
-        UIInit();
+        //    MotorControlInit();
+        //    UIInit();
 
         // Start the tasks
         SafetyStart();
-        MotorControlStart();
+        //    MotorControlStart();
         PiUIStart();
-        UIStart();
-
+        //    UIStart();
     }
 }
