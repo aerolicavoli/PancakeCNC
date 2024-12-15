@@ -3,3 +3,8 @@ Pancake_esp/managed_components
 *.old
 *.zip
 *.log
+*Secret.h
+*autosave*
+*auto_save*
+*~*
+*cach*

@@ -4,10 +4,10 @@
 
 #define TIMER_PRECISION 1000000
 // Constructor implementation
-StepperMotor::StepperMotor(gpio_num_t stepPin, gpio_num_t dirPin, double Acceleration_degps2,
-                           double StepSize_deg, const char *name)
-    : name(name), stepPin(stepPin), dirPin(dirPin), Acceleration_degps2(Acceleration_degps2),
-      StepSize_deg(StepSize_deg), timerRunning(false)
+StepperMotor::StepperMotor(gpio_num_t stepPin, gpio_num_t dirPin, float AccelLimit_degps2,
+                           float SpeedLimit_degps, float StepSize_deg, const char *name)
+    : name(name), stepPin(stepPin), dirPin(dirPin), m_AccelLimit_degps2(AccelLimit_degps2),
+      m_SpeedLimit_degps(SpeedLimit_degps), m_StepSize_deg(StepSize_deg), timerRunning(false)
 {
     // Initialize variables
     stepCount = 0;
@@ -41,13 +41,13 @@ void StepperMotor::InitializeTimers(uint32_t MotorControlPeriod_ms)
         SOC_MOD_CLK_APB, ESP_CLK_TREE_SRC_FREQ_PRECISION_EXACT, &apb_freq));
 
     // Set the resolution to center the ref speed at timer midpoint
-    // double RefSpeed_degps = 360;
-    timer_config.resolution_hz = TIMER_PRECISION; // RefSpeed_degps / stepSize_deg * (1ULL <<
+    //  float RefSpeed_degps = 360;
+    timer_config.resolution_hz = TIMER_PRECISION; // RefSpeed_degps / m_StepSize_deg * (1ULL <<
                                                   // (SOC_TIMER_GROUP_COUNTER_BIT_WIDTH/2));
 
     // Resulting min and max speed
-    double maxSpeed_degps = StepSize_deg * timer_config.resolution_hz;
-    // double minSpeed_degps = maxSpeed_degps / (1ULL << SOC_TIMER_GROUP_COUNTER_BIT_WIDTH);
+    float maxSpeed_degps = m_StepSize_deg * timer_config.resolution_hz;
+    //  float minSpeed_degps = maxSpeed_degps / (1ULL << SOC_TIMER_GROUP_COUNTER_BIT_WIDTH);
     ESP_LOGI(name, "APB CLK FREQ %ld hz | Timer Resolution: %lu hz | Max Speed %f deg/s", apb_freq,
              timer_config.resolution_hz, maxSpeed_degps);
 
@@ -59,10 +59,10 @@ void StepperMotor::InitializeTimers(uint32_t MotorControlPeriod_ms)
     CUSTOM_ERROR_CHECK(gptimer_enable(step_timer));
     // Set speed SpeedIncrement_hz based on acceleration
 
-    SpeedIncrement_hz = (Acceleration_degps2 / StepSize_deg * MotorControlPeriod_ms / 1000.0);
+    SpeedIncrement_hz = (m_AccelLimit_degps2 / m_StepSize_deg * MotorControlPeriod_ms / 1000.0);
 
-    double localSpeedIncrement_hz = SpeedIncrement_hz;
-    ESP_LOGI(name, "Acceleration: %f degps2 | Speed Increment: %f hz", Acceleration_degps2,
+    float localSpeedIncrement_hz = SpeedIncrement_hz;
+    ESP_LOGI(name, "Acceleration: %f degps2 | Speed Increment: %f hz", m_AccelLimit_degps2,
              localSpeedIncrement_hz);
 
     ESP_LOGI(name, "Init Complete");
@@ -78,12 +78,26 @@ void StepperMotor::setDirection(bool dir)
 }
 
 // Set target speed
-void StepperMotor::setTargetSpeed(double Speed_degps) { TargetSpeed_degps = Speed_degps; }
+void StepperMotor::setTargetSpeed(float Speed_degps)
+{
+    if (Speed_degps > m_SpeedLimit_degps)
+    {
+        TargetSpeed_degps = m_SpeedLimit_degps;
+    }
+    else if (Speed_degps < (-1.0f) * m_SpeedLimit_degps)
+    {
+        TargetSpeed_degps = (-1.0f) * m_SpeedLimit_degps;
+    }
+    else
+    {
+        TargetSpeed_degps = Speed_degps;
+    }
+}
 
 // Log motor status
 void StepperMotor::logStatus()
 {
-    double speed = CurrentSpeed_degps;
+    float speed = CurrentSpeed_degps;
     portENTER_CRITICAL(&mux);
     int32_t steps = stepCount;
     portEXIT_CRITICAL(&mux);
@@ -116,7 +130,7 @@ void StepperMotor::GetTlm(motor_tlm_t *Tlm)
     int32_t steps = stepCount;
     portEXIT_CRITICAL(&mux);
 
-    Tlm->Position_deg = steps * StepSize_deg;
+    Tlm->Position_deg = steps * m_StepSize_deg;
     Tlm->Speed_degps = CurrentSpeed_degps;
 }
 
@@ -163,7 +177,7 @@ void StepperMotor::UpdateSpeed(bool ForceUpdate)
     // Update timer alarm value
     if (CurrentSpeed_degps != 0.0)
     {
-        double absSpeed_hz = fabs(CurrentSpeed_degps) / StepSize_deg;
+        float absSpeed_hz = fabs(CurrentSpeed_degps) / m_StepSize_deg;
         uint64_t alarm_count = static_cast<uint64_t>(TIMER_PRECISION / (absSpeed_hz * 2.0));
 
         gptimer_alarm_config_t alarm_config = {};

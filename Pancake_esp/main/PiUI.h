@@ -43,9 +43,8 @@ extern "C"
 
     typedef struct __attribute__((packed))
     {
-        int32_t Speed_degps;
-        int32_t Position_deg;
-        // Add more telemetry fields as needed
+        float Speed_degps;
+        float Position_deg;
     } motor_tlm_t;
 
     typedef struct __attribute__((packed))

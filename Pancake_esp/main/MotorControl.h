@@ -11,10 +11,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include <cmath>
-
-#define C_DEGToRAD 0.01745329251
-#define C_S0Length_m 0.1963
-#define C_S1Length_m 0.1563
+#include "PanMath.h"
 
 void MotorControlInit();
 void MotorControlStart();
