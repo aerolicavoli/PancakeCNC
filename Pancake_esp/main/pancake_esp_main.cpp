@@ -13,18 +13,18 @@ extern "C"
     void app_main(void)
     {
         // Initialize the tasks
-
         PiUIInit();
         SafetyInit();
-        //    MotorControlInit();
-        //    UIInit();
-        TlmPublisherInit();
+        // MotorControlInit();
+        // UIInit();
 
         // Start the tasks
         SafetyStart();
         //    MotorControlStart();
         PiUIStart();
-        //    UIStart();
-        TlmPublisherStart();
+        // UIStart();
+        // TlmPublisherStart();
+
+        TlmPublisherInit();
     }
 }
