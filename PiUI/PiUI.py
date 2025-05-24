@@ -5,6 +5,7 @@ import time
 import string
 import struct
 
+RAWLOGGING = True
 
 # Serial port configuration
 SERIAL_PORT = '/dev/ttys0'  # Mac
@@ -68,7 +69,10 @@ def parse_message_stream(ser):
             time.sleep(0.01)
             continue
         b = byte[0]
-        # print(f"Data received: {byte}")
+        if RAWLOGGING:
+            print(b.decode("utf-8"))
+            # print(f"Data received: {byte}")
+            continue
 
         # Handle escaping
         if escape_next:
