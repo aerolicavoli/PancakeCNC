@@ -70,8 +70,10 @@ def parse_message_stream(ser):
             continue
         b = byte[0]
         if RAWLOGGING:
-            print(b.decode("utf-8"))
-            # print(f"Data received: {byte}")
+            try:
+                print(byte.decode("utf-8"), end='')  # avoid newline if streaming
+            except UnicodeDecodeError:
+                print(f"[Non-UTF8 byte: {b}]")
             continue
 
         # Handle escaping
