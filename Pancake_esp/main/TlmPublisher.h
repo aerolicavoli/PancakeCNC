@@ -16,6 +16,7 @@
 #include "time.h"
 #include "sys/time.h"
 #include "lwip/apps/sntp.h"
+#include "driver/temperature_sensor.h"
 
 // WiFi connection states
 typedef enum
@@ -33,6 +34,7 @@ void TlmPublisherTask(void *Parameters);
 void wifi_cleanup();
 void send_data_to_influxdb(const char *data, size_t length);
 void add_data_to_buffer(const char *measurement, const char *field, float value, int64_t timestamp);
+void add_log_to_buffer(const char *message);
 void wifi_reconnect_task(void *pvParameters);
 void stop_tlm_tasks();
 

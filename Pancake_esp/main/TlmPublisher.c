@@ -8,15 +8,16 @@ const int WIFI_CONNECTED_BIT = BIT0;
 const int WIFI_FAIL_BIT = BIT1;
 
 // Telemetry buffer settings
-#define BUFFER_SIZE 2048
-#define BUFFER_ADD_PERIOD_MS 5000
+#define BUFFER_SIZE 4096
+#define DST_CAP 4096  // worst-case compressed size
+#define BUFFER_ADD_PERIOD_MS 1000
 #define TRANSMITPERIOD_CYCLES 4 // Transmit every 4 buffer add cycles
 #define WIFI_CONNECT_TIMEOUT_MS 30000
 #define MAX_RETRY_COUNT 5
 
 // Buffer for telemetry data
 static char telemetry_buffer[BUFFER_SIZE];
-static char compressed_data[BUFFER_SIZE];
+static char compressed_data[DST_CAP];
 static size_t buffer_index = 0;
 
 // External mutex for telemetry data
@@ -29,6 +30,24 @@ static TaskHandle_t wifiReconnectTaskHandle = NULL;
 // WiFi state tracking
 static volatile wifi_connection_state_t wifi_state = WIFI_STATE_INIT;
 static volatile bool wifi_initialized = false;
+
+telemetry_data_t localTlm;
+
+temperature_sensor_handle_t temp_handle = NULL;
+
+static int influx_vprintf(const char *str, va_list args)
+{
+    char log_buffer[256];
+    int len = vsnprintf(log_buffer, sizeof(log_buffer), str, args);
+    if (len > 0)
+    {
+        size_t payload_length = (len < sizeof(log_buffer)) ? len : sizeof(log_buffer) - 1;
+        
+        add_log_to_buffer(log_buffer);
+        send_protocol_message(MSG_TYPE_LOG, (uint8_t *)log_buffer, payload_length);
+    }
+    return len;
+}
 
 void obtain_time()
 {
@@ -65,7 +84,6 @@ void wifi_reconnect_task(void *pvParameters)
     const TickType_t xMaxWait = pdMS_TO_TICKS(10000); // Max wait 10 seconds
     int reconnect_delay_ms = 1000;
     int retry_count = 0;
-    UBaseType_t uxHighWaterMark;
 
     for (;;)
     {
@@ -80,11 +98,6 @@ void wifi_reconnect_task(void *pvParameters)
         EventBits_t bits = xEventGroupWaitBits(wifi_event_group, WIFI_FAIL_BIT,
                                                pdTRUE, // Clear on exit
                                                pdFALSE, xMaxWait);
-
-                                               UBaseType_t uxHighWaterMark;
-
-        uxHighWaterMark = uxTaskGetStackHighWaterMark(NULL);
-        ESP_LOGI(TAG, "wifi_reconnect_task stack high water mark: %u", uxHighWaterMark);
 
         if (bits & WIFI_FAIL_BIT)
         {
@@ -180,6 +193,13 @@ void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id
             {
                 ESP_LOGE(TAG, "Failed to create TlmPublisherTask");
             }
+            else
+            {
+                // Start influx logging
+                vTaskDelay(pdMS_TO_TICKS(1000));
+                esp_log_set_vprintf(influx_vprintf);
+
+            }
         }
     }
 }
@@ -230,10 +250,38 @@ void wifi_cleanup()
         ESP_LOGI(TAG, "WiFi cleaned up");
     }
 }
+void add_log_to_buffer(const char *message)
+{
+    int64_t timestamp;
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    timestamp = (int64_t)tv.tv_sec + (int64_t)tv.tv_usec/1000000L;
+
+    int written = snprintf(telemetry_buffer + buffer_index, BUFFER_SIZE - buffer_index,
+        "logs,level=info,source=myApp message=\"%s\",timestamp=%lld\n", message, timestamp);
+
+    if (written > 0)
+    {
+    if (buffer_index + written < BUFFER_SIZE)
+    {
+        buffer_index += written;
+    }
+    else
+    {
+        ESP_LOGW(TAG, "Buffer overflow prevented, data not added");
+    }
+    }
+    else
+    {
+        ESP_LOGE(TAG, "Error writing to buffer");
+    }
+}
 
 void add_data_to_buffer(const char *measurement, const char *field, float value, int64_t timestamp)
 {
-    int written = snprintf(telemetry_buffer + buffer_index, BUFFER_SIZE - buffer_index, "%s %s=%.2f %lld\n", measurement, field, value, timestamp);
+    int written = snprintf(telemetry_buffer + buffer_index, BUFFER_SIZE - buffer_index,
+                           "%s,location=us-midwest %s=%.2f %lld\n", measurement, field, value, timestamp);
+
     if (written > 0)
     {
         if (buffer_index + written < BUFFER_SIZE)
@@ -253,7 +301,11 @@ void add_data_to_buffer(const char *measurement, const char *field, float value,
 
 void TlmPublisherInitAndStart()
 {
+    temperature_sensor_config_t temp_sensor_config = TEMPERATURE_SENSOR_CONFIG_DEFAULT(20, 50);
+    ESP_ERROR_CHECK(temperature_sensor_install(&temp_sensor_config, &temp_handle));
 
+    // Enable temperature sensor
+    ESP_ERROR_CHECK(temperature_sensor_enable(temp_handle));
     // Initialize and connect to WiFi
     // Check if WiFi is already initialized
     if (wifi_initialized)
@@ -351,29 +403,35 @@ void TlmPublisherTask(void *Parameters)
 
     unsigned int frameNum = 0;
 
+
+    // Get converted sensor data
+    float tsens_out;
+
     for (;;)
     {
-        uxHighWaterMark = uxTaskGetStackHighWaterMark(NULL);
-        ESP_LOGI(TAG, "TlmPublisherTask: %u", uxHighWaterMark);
+        //uxHighWaterMark = uxTaskGetStackHighWaterMark(NULL);
+        //ESP_LOGI(TAG, "TlmPublisherTask: %u", uxHighWaterMark);
 
-        
         gettimeofday(&tv, NULL);
-        timestamp = (int64_t)tv.tv_sec * 1000000L + (int64_t)tv.tv_usec;
-        
+        timestamp = (int64_t)tv.tv_sec + (int64_t)tv.tv_usec/1000000L;
+
         // Acquire the mutex before updating shared data
-        if (true) //xSemaphoreTake(telemetry_mutex, pdMS_TO_TICKS(100)) == pdTRUE)
+        if (true) // xSemaphoreTake(telemetry_mutex, pdMS_TO_TICKS(100)) == pdTRUE)
         {
+            // Gather hardware telemetry data
+            ESP_ERROR_CHECK(temperature_sensor_get_celsius(temp_handle, &tsens_out));
+            add_data_to_buffer("espTemp", "data", tsens_out, timestamp);
+        
+            //add_log_to_buffer("Test log");
             // Copy telemetry data to local variable
-            // memcpy(&localTlm, &telemetry_data, sizeof(telemetry_data));
+            //memcpy(&localTlm, &telemetry_data, sizeof(telemetry_data));
 
             // Release the mutex, no more references to telemetry_data below this point
-            //xSemaphoreGive(telemetry_mutex);
+            // xSemaphoreGive(telemetry_mutex);
 
             // Add telemetry data to buffer
-            add_data_to_buffer("tipPos_X_m", "data", 4.0, timestamp);
-
-            // add_data_to_buffer("tipPos_X_m", "data", localTlm.tipPos_X_m, timestamp);
-            // add_data_to_buffer("tipPos_Y_m", "data", localTlm.tipPos_Y_m, timestamp);
+            add_data_to_buffer("tipPos_X_m", "data", telemetry_data.tipPos_X_m, timestamp);
+            add_data_to_buffer("tipPos_Y_m", "data", telemetry_data.tipPos_Y_m, timestamp);
             // add_data_to_buffer("S0_LimitSwitch", "data", localTlm.S0LimitSwitch, timestamp);
             // add_data_to_buffer("S0_Pos_deg", "data", localTlm.S0MotorTlm.Position_deg,
             // timestamp); add_data_to_buffer("S0_Speed_degps", "data",
@@ -386,31 +444,48 @@ void TlmPublisherTask(void *Parameters)
         {
             ESP_LOGW(TAG, "Failed to acquire telemetry mutex");
         }
-        
+
         // Control the alive light
         if (frameNum % TRANSMITPERIOD_CYCLES == 0)
         {
-            uLongf compressed_size = BUFFER_SIZE;
+            uLongf compressed_size = DST_CAP;
 
             if (buffer_index > 0)
             {
+                /*
                 // Compress the data
-                compress((Bytef *)compressed_data, &compressed_size,
-                         (const Bytef *)telemetry_buffer, buffer_index);
+                int zret = compress((Bytef *)compressed_data, &compressed_size,
+                                    (const Bytef *)telemetry_buffer, buffer_index);
 
+                if (zret == Z_OK)
+                {
+                    ESP_LOGI(TAG, "Transmit frame, buffer_index: %d, compressed_size: %lu",
+                             buffer_index, (unsigned long)compressed_size);
+                    send_data_to_influxdb(compressed_data, compressed_size);
+                }
+                else
+                {
+                    ESP_LOGE(TAG, "Compression failed (ret=%d), need %lu bytes", zret,
+                             (unsigned long)compressed_size);
+                }
+                */
                 // Reset the buffer
-                buffer_index = 0;
-            }
 
-            // Send the compressed data
-            if (compressed_size > 0)
-            {
-                send_data_to_influxdb(compressed_data, compressed_size);
+                //temp suspend logging over WiFi
+                EnableLoggingOverUART();
+
+                send_data_to_influxdb(telemetry_buffer, buffer_index);
+
+                // temp restart logging over WiFi
+                esp_log_set_vprintf(influx_vprintf);
+
+                buffer_index = 0;
+                
             }
         }
 
         frameNum++;
-        
+
         vTaskDelay(bufferAddPeriod_Ticks);
     }
 }
@@ -432,7 +507,7 @@ void send_data_to_influxdb(const char *data, size_t length)
     snprintf(auth_header, sizeof(auth_header), "Token %s", INFLUXDB_TOKEN);
     esp_http_client_set_header(client, "Authorization", auth_header);
 
-    esp_http_client_set_header(client, "Content-Encoding", "gzip");
+    //esp_http_client_set_header(client, "Content-Encoding", "gzip");
     esp_http_client_set_header(client, "Content-Type", "text/plain");
     esp_http_client_set_post_field(client, data, length);
 
@@ -442,6 +517,16 @@ void send_data_to_influxdb(const char *data, size_t length)
     for (int i = 0; i < 3; i++)
     {
         err = esp_http_client_perform(client);
+
+        int status = esp_http_client_get_status_code(client);
+
+        if (status >= 400) {
+            char buf[256];
+            int len = esp_http_client_read_response(client, buf, sizeof(buf) - 1);
+            buf[len] = 0;                    // NUL-terminate
+            ESP_LOGE(TAG, "InfluxDB error %d: %s", status, buf);
+        }
+
         if (err == ESP_OK)
         {
             ESP_LOGI(TAG, "Data sent successfully, attempt %d", i + 1);
