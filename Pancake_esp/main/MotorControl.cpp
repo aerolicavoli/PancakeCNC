@@ -46,10 +46,12 @@ void MotorControlInit()
     PumpMotor.InitializeTimers(MOTOR_CONTROL_PERIOD_MS);
 }
 
-void MotorControlStart() { xTaskCreate(MotorControlTask, TAG, 4096, NULL, 1, NULL); }
+void MotorControlStart() { xTaskCreate(MotorControlTask, TAG, 8000, NULL, 1, NULL); }
 
 void MotorControlTask(void *Parameters)
 {
+    vTaskDelay(pdMS_TO_TICKS(30000)); // Wait for coms to init
+
     // 100hz motor control loop
     unsigned int motorUpdatePeriod_Ticks = pdMS_TO_TICKS(MOTOR_CONTROL_PERIOD_MS);
 
@@ -62,28 +64,29 @@ void MotorControlTask(void *Parameters)
     float target_S0_deg, target_S1_deg;
     target_S0_deg = target_S1_deg = 0.0f;
 
+
     motor_tlm_t localS0Tlm;
     motor_tlm_t localS1Tlm;
     motor_tlm_t localPumpTlm;
 
     GuidanceMode guidanceMode = GuidanceMode::E_NEXT;
-    float deltaTime_s = MOTOR_CONTROL_PERIOD_MS / 1000.0f;
+    unsigned int deltaTime_ms = MOTOR_CONTROL_PERIOD_MS;
 
     StopGuidance stopGuidance(0);
     GeneralGuidance *currentGuidance = &spiral;
 
     // Temp hard coded array of instruction
-    static cnc_instruction_t instruction_array[50] = {
-        {GuidanceMode::E_ARCHIMEDEANSPIRAL, {0.0007f, 0.2f, 0.2f, 0.1f}},
-        {GuidanceMode::E_STOP, {0}},
-        {GuidanceMode::E_ARCHIMEDEANSPIRAL, {0.0007f, 0.2f, 0.2f, 0.1f}},
-        {GuidanceMode::E_STOP, {0}}};
+    static cnc_instruction_t instruction_array[4] = {
+        {GuidanceMode::E_ARCHIMEDEANSPIRAL, {0.0014f, 0.2f, 0.2f, 0.1f}},
+        {GuidanceMode::E_STOP, {2000}},
+        {GuidanceMode::E_ARCHIMEDEANSPIRAL, {0.0014f, 0.2f, -0.2f, 0.1f}},
+        {GuidanceMode::E_STOP, {2000}}};
 
     int instruction_index = 0;
 
     for (;;)
     {
-        HandleCommandQueue();
+        //HandleCommandQueue();
 
         // Check if the current instruction is valid
         if (instruction_index < sizeof(instruction_array) && guidanceMode == GuidanceMode::E_NEXT)
@@ -100,6 +103,8 @@ void MotorControlTask(void *Parameters)
             {
                 case GuidanceMode::E_ARCHIMEDEANSPIRAL:
                 {
+                    ESP_LOGI(TAG, "Starting E_ARCHIMEDEANSPIRAL");
+
                     ArchimedeanSpiralConfig_t config =
                         current_instruction.guidance_config.archimedean_spiral_config;
                     spiral.set_spiral_constant(config.spiral_constant);
@@ -110,12 +115,16 @@ void MotorControlTask(void *Parameters)
                 }
                 case GuidanceMode::E_TRAPEZOIDALJOG:
                 {
+                    ESP_LOGI(TAG, "Starting E_TRAPEZOIDALJOG");
+
                     // LinearJogConfig_t config =
                     // current_instruction.guidance_config.linear_jog_config;
                     break;
                 }
                 case GuidanceMode::E_STOP:
                 {
+                    ESP_LOGI(TAG, "Starting E_STOP");
+
                     StopConfig_t config = current_instruction.guidance_config.stop_config;
                     stopGuidance.SetTimeout(config.timeout_ms);
                     currentGuidance = &stopGuidance;
@@ -125,7 +134,7 @@ void MotorControlTask(void *Parameters)
                     break;
             }
         }
-        else if (guidanceMode != GuidanceMode::E_NEXT)
+        else if (instruction_index >= sizeof(instruction_array))
         {
             // End of instruction array reached
             ESP_LOGI(TAG, "End of instruction array reached");
@@ -136,9 +145,10 @@ void MotorControlTask(void *Parameters)
         {
             // Get target position this frame
             GuidanceMode nextGuidanceMode =
-                currentGuidance->GetTargetPosition(deltaTime_s, pos_m, target_m);
+                currentGuidance->GetTargetPosition(deltaTime_ms, pos_m, target_m);
         }
 
+        
         // Copy local tlm
         PumpMotor.GetTlm(&localPumpTlm);
         S0Motor.GetTlm(&localS0Tlm);
@@ -149,7 +159,7 @@ void MotorControlTask(void *Parameters)
         pos_m = tempPos;
 
         // Get target position this frame
-        guidanceMode = currentGuidance->GetTargetPosition(deltaTime_s, pos_m, target_m);
+        guidanceMode = currentGuidance->GetTargetPosition(deltaTime_ms, pos_m, target_m);
 
         CartToAng(target_S0_deg, target_S1_deg, target_m);
 
@@ -182,14 +192,14 @@ void MotorControlTask(void *Parameters)
         }
 
         // Acquire the mutex before updating shared data
-        if (xSemaphoreTake(telemetry_mutex, pdMS_TO_TICKS(100)) == pdTRUE)
-        {
+     //   if (xSemaphoreTake(telemetry_mutex, pdMS_TO_TICKS(100)) == pdTRUE)
+     //   {
             memcpy(&telemetry_data.PumpMotorTlm, &localPumpTlm, sizeof localPumpTlm);
             memcpy(&telemetry_data.S0MotorTlm, &localS0Tlm, sizeof localS0Tlm);
             memcpy(&telemetry_data.S1MotorTlm, &localS1Tlm, sizeof localS1Tlm);
 
-            telemetry_data.tipPos_X_m = pos_m.x;
-            telemetry_data.tipPos_Y_m = pos_m.y;
+            telemetry_data.tipPos_X_m = target_m.x; // pos_m.x;
+            telemetry_data.tipPos_Y_m = target_m.y; //pos_m.y;
 
             // Read the limit switch switch and adjust inhibits
             if (telemetry_data.S0LimitSwitch)
@@ -211,12 +221,12 @@ void MotorControlTask(void *Parameters)
             }
 
             // Release the mutex
-            xSemaphoreGive(telemetry_mutex);
-        }
-        else
-        {
-            ESP_LOGW(TAG, "Failed to acquire telemetry mutex");
-        }
+        //    xSemaphoreGive(telemetry_mutex);
+       // }
+       // else
+       // {
+       //     ESP_LOGW(TAG, "Failed to acquire telemetry mutex");
+       // }
 
         if ((frameNum % reportPeriod_frames) == 0)
         {

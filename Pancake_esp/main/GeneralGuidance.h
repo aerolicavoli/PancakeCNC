@@ -25,7 +25,7 @@ class GeneralGuidance
      * @param CmdPos_m Output: Target position in meters.
      * @return GuidanceMode The next guidance mode.
      */
-    virtual GuidanceMode GetTargetPosition(float DeltaTime_s, Vector2D CurPos_m,
+    virtual GuidanceMode GetTargetPosition(unsigned int DeltaTime_ms, Vector2D CurPos_m,
                                            Vector2D &CmdPos_m) = 0;
 };
 
@@ -33,25 +33,20 @@ class StopGuidance : public GeneralGuidance
 {
   public:
     StopGuidance(int32_t timeout_ms) : timeout_ms(timeout_ms), remaining_time_ms(timeout_ms) {}
-    GuidanceMode GetTargetPosition(float DeltaTime_s, Vector2D CurPos_m,
+    GuidanceMode GetTargetPosition(unsigned int DeltaTime_ms, Vector2D CurPos_m,
                                    Vector2D &CmdPos_m) override
     {
-        CmdPos_m = CurPos_m;
-
-        if (timeout_ms == -1)
+      
+      CmdPos_m = CurPos_m;
+ 
+        if ((timeout_ms != -1) && (remaining_time_ms -= DeltaTime_ms) <= 0)
+        {
+            return E_NEXT;
+        }
+        else
         {
             return E_STOP;
         }
-
-        // TODO make this suck less
-        remaining_time_ms -= DeltaTime_s;
-
-        if (remaining_time_ms <= 0)
-        {
-            remaining_time_ms = -1;
-            return E_NEXT;
-        }
-        return E_STOP; // Continue stopping if timeout hasn't occurred
     }
 
     void SetTimeout(int32_t timeout_ms)

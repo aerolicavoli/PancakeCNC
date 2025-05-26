@@ -6,24 +6,24 @@
 // Constructor implementation
 StepperMotor::StepperMotor(gpio_num_t stepPin, gpio_num_t dirPin, float AccelLimit_degps2,
                            float SpeedLimit_degps, float StepSize_deg, const char *name)
-    : name(name), stepPin(stepPin), dirPin(dirPin), m_AccelLimit_degps2(AccelLimit_degps2),
+    : name(name), m_stepPin(stepPin), m_dirPin(dirPin), m_AccelLimit_degps2(AccelLimit_degps2),
       m_SpeedLimit_degps(SpeedLimit_degps), m_StepSize_deg(StepSize_deg), timerRunning(false)
 {
     // Initialize variables
-    stepCount = 0;
-    direction = 1;
-    stepState = false;
-    CurrentSpeed_degps = 0;
-    TargetSpeed_degps = 0;
-    SpeedIncrement_hz = 0.0;
-    DirectionalInhibit = E_NO_INHIBIT;
+    m_stepCount = 0;
+    m_direction = 1;
+    m_stepState = false;
+    m_CurrentSpeed_degps = 0;
+    m_TargetSpeed_degps = 0;
+    m_SpeedIncrement_hz = 0.0;
+    m_DirectionalInhibit = E_NO_INHIBIT;
     mux = portMUX_INITIALIZER_UNLOCKED;
 
     // Configure GPIO pins
     gpio_config_t io_conf = {};
     io_conf.intr_type = GPIO_INTR_DISABLE;
     io_conf.mode = GPIO_MODE_OUTPUT;
-    io_conf.pin_bit_mask = (1ULL << stepPin) | (1ULL << dirPin);
+    io_conf.pin_bit_mask = (1ULL << m_stepPin) | (1ULL << m_dirPin);
     gpio_config(&io_conf);
 }
 
@@ -59,9 +59,9 @@ void StepperMotor::InitializeTimers(uint32_t MotorControlPeriod_ms)
     CUSTOM_ERROR_CHECK(gptimer_enable(step_timer));
     // Set speed SpeedIncrement_hz based on acceleration
 
-    SpeedIncrement_hz = (m_AccelLimit_degps2 / m_StepSize_deg * MotorControlPeriod_ms / 1000.0);
+    m_SpeedIncrement_hz = (m_AccelLimit_degps2 / m_StepSize_deg * MotorControlPeriod_ms / 1000.0);
 
-    float localSpeedIncrement_hz = SpeedIncrement_hz;
+    float localSpeedIncrement_hz = m_SpeedIncrement_hz;
     ESP_LOGI(name, "Acceleration: %f degps2 | Speed Increment: %f hz", m_AccelLimit_degps2,
              localSpeedIncrement_hz);
 
@@ -72,9 +72,9 @@ void StepperMotor::InitializeTimers(uint32_t MotorControlPeriod_ms)
 void StepperMotor::setDirection(bool dir)
 {
     portENTER_CRITICAL(&mux);
-    direction = dir ? 1 : -1;
+    m_direction = dir ? 1 : -1;
     portEXIT_CRITICAL(&mux);
-    gpio_set_level(dirPin, dir);
+    gpio_set_level(m_dirPin, dir);
 }
 
 // Set target speed
@@ -82,24 +82,24 @@ void StepperMotor::setTargetSpeed(float Speed_degps)
 {
     if (Speed_degps > m_SpeedLimit_degps)
     {
-        TargetSpeed_degps = m_SpeedLimit_degps;
+        m_TargetSpeed_degps = m_SpeedLimit_degps;
     }
     else if (Speed_degps < (-1.0f) * m_SpeedLimit_degps)
     {
-        TargetSpeed_degps = (-1.0f) * m_SpeedLimit_degps;
+        m_TargetSpeed_degps = (-1.0f) * m_SpeedLimit_degps;
     }
     else
     {
-        TargetSpeed_degps = Speed_degps;
+        m_TargetSpeed_degps = Speed_degps;
     }
 }
 
 // Log motor status
 void StepperMotor::logStatus()
 {
-    float speed = CurrentSpeed_degps;
+    float speed = m_CurrentSpeed_degps;
     portENTER_CRITICAL(&mux);
-    int32_t steps = stepCount;
+    int32_t steps = m_stepCount;
     portEXIT_CRITICAL(&mux);
     ESP_LOGI(name, "Step Count: %ld | Speed: %.2f deg/s", (long int)steps, speed);
 }
@@ -112,13 +112,13 @@ bool IRAM_ATTR StepperMotor::onStepTimerCallback(gptimer_handle_t timer,
     StepperMotor *motor = static_cast<StepperMotor *>(user_ctx);
 
     // Toggle STEP pin
-    motor->stepState = !motor->stepState;
-    gpio_set_level(motor->stepPin, motor->stepState);
+    motor->m_stepState = !motor->m_stepState;
+    gpio_set_level(motor->m_stepPin, motor->m_stepState);
 
     // Update step count
-    if (motor->stepState)
+    if (motor->m_stepState)
     {
-        motor->stepCount += motor->direction;
+        motor->m_stepCount += motor->m_direction;
     }
 
     return false;
@@ -127,11 +127,11 @@ bool IRAM_ATTR StepperMotor::onStepTimerCallback(gptimer_handle_t timer,
 void StepperMotor::GetTlm(motor_tlm_t *Tlm)
 {
     portENTER_CRITICAL(&mux);
-    int32_t steps = stepCount;
+    int32_t steps = m_stepCount;
     portEXIT_CRITICAL(&mux);
 
     Tlm->Position_deg = steps * m_StepSize_deg;
-    Tlm->Speed_degps = CurrentSpeed_degps;
+    Tlm->Speed_degps = m_CurrentSpeed_degps;
 }
 
 // Update the motor pulse freq
@@ -140,34 +140,35 @@ void StepperMotor::UpdateSpeed(bool ForceUpdate)
 
     if (ForceUpdate)
     {
-        CurrentSpeed_degps = TargetSpeed_degps;
+        m_CurrentSpeed_degps = m_TargetSpeed_degps;
     }
     // Adjust CurrentSpeed_degps towards TargetSpeed_degps
-    else if ((CurrentSpeed_degps > 0.0 && TargetSpeed_degps < 0.0) ||
-             (CurrentSpeed_degps < 0.0 && TargetSpeed_degps > 0.0))
+    else if ((m_CurrentSpeed_degps > 0.0 && m_TargetSpeed_degps < 0.0) ||
+             (m_CurrentSpeed_degps < 0.0 && m_TargetSpeed_degps > 0.0))
     {
         // Decelerate to zero before changing direction
-        if (fabs(CurrentSpeed_degps) > SpeedIncrement_hz)
+        if (fabs(m_CurrentSpeed_degps) > m_SpeedIncrement_hz)
         {
-            CurrentSpeed_degps +=
-                (CurrentSpeed_degps > 0.0) ? -SpeedIncrement_hz : SpeedIncrement_hz;
+            m_CurrentSpeed_degps +=
+                (m_CurrentSpeed_degps > 0.0) ? -m_SpeedIncrement_hz : m_SpeedIncrement_hz;
         }
         else
         {
-            CurrentSpeed_degps = 0.0;
+            m_CurrentSpeed_degps = 0.0;
         }
     }
     else
     {
         // Accelerate or decelerate towards TargetSpeed_degps
-        if (fabs(TargetSpeed_degps - CurrentSpeed_degps) > SpeedIncrement_hz)
+        if (fabs(m_TargetSpeed_degps - m_CurrentSpeed_degps) > m_SpeedIncrement_hz)
         {
-            CurrentSpeed_degps +=
-                (TargetSpeed_degps > CurrentSpeed_degps) ? SpeedIncrement_hz : -SpeedIncrement_hz;
+            m_CurrentSpeed_degps += (m_TargetSpeed_degps > m_CurrentSpeed_degps)
+                                        ? m_SpeedIncrement_hz
+                                        : -m_SpeedIncrement_hz;
         }
         else
         {
-            CurrentSpeed_degps = TargetSpeed_degps;
+            m_CurrentSpeed_degps = m_TargetSpeed_degps;
         }
     }
 
@@ -175,9 +176,9 @@ void StepperMotor::UpdateSpeed(bool ForceUpdate)
     EnforceDirectionalInhibit();
 
     // Update timer alarm value
-    if (CurrentSpeed_degps != 0.0)
+    if (m_CurrentSpeed_degps != 0.0)
     {
-        float absSpeed_hz = fabs(CurrentSpeed_degps) / m_StepSize_deg;
+        float absSpeed_hz = fabs(m_CurrentSpeed_degps) / m_StepSize_deg;
         uint64_t alarm_count = static_cast<uint64_t>(TIMER_PRECISION / (absSpeed_hz * 2.0));
 
         gptimer_alarm_config_t alarm_config = {};
@@ -201,19 +202,19 @@ void StepperMotor::UpdateSpeed(bool ForceUpdate)
         timerRunning = false;
     }
 
-    setDirection(CurrentSpeed_degps >= 0);
+    setDirection(m_CurrentSpeed_degps >= 0);
 }
 
 void StepperMotor::EnforceDirectionalInhibit(void)
 {
-    if (((E_INHIBIT_FORWARD == DirectionalInhibit) && CurrentSpeed_degps > 0.0) ||
-        ((E_INHIBIT_BACKWARD == DirectionalInhibit) && CurrentSpeed_degps < 0.0))
+    if (((E_INHIBIT_FORWARD == m_DirectionalInhibit) && m_CurrentSpeed_degps > 0.0) ||
+        ((E_INHIBIT_BACKWARD == m_DirectionalInhibit) && m_CurrentSpeed_degps < 0.0))
     {
-        CurrentSpeed_degps = 0.0;
+        m_CurrentSpeed_degps = 0.0;
     }
 }
 
 void StepperMotor::SetDirectionalInhibit(direction_inhibit_type_t Inhibit)
 {
-    DirectionalInhibit = Inhibit;
+    m_DirectionalInhibit = Inhibit;
 }

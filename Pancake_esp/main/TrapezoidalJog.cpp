@@ -1,7 +1,7 @@
 #include "TrapezoidalJog.h"
 #include <math.h>
 
-GuidanceMode TrapezoidalJog::GetTargetPosition(float DeltaTime_s, Vector2D CurPos_m,
+GuidanceMode TrapezoidalJog::GetTargetPosition(unsigned int DeltaTime_ms, Vector2D CurPos_m,
                                                Vector2D &CmdPos_m)
 {
     Vector2D distance_m = m_target_position_m - CurPos_m;
@@ -24,7 +24,7 @@ GuidanceMode TrapezoidalJog::GetTargetPosition(float DeltaTime_s, Vector2D CurPo
             time_to_max_velocity_s + (distance - 2 * distance_to_max_velocity_m) / m_velocity_mps;
     }
 
-    m_current_time_s += DeltaTime_s;
+    m_current_time_s += DeltaTime_ms * 0.001;
 
     if (m_current_time_s >= time_to_target_s)
     {

@@ -26,12 +26,12 @@ class StepperMotor
     } direction_inhibit_type_t;
 
     // Constructor
-    StepperMotor(gpio_num_t stepPin, gpio_num_t dirPin,  float AccelLimit_degps2,  float SpeedLimit_degps,
-                  float StepSize_deg, const char *name);
+    StepperMotor(gpio_num_t stepPin, gpio_num_t dirPin, float AccelLimit_degps2,
+                 float SpeedLimit_degps, float StepSize_deg, const char *name);
 
     // Public methods
     void setDirection(bool dir);
-    void setTargetSpeed( float Speed_degps);
+    void setTargetSpeed(float Speed_degps);
     void InitializeTimers(uint32_t MotorControlPeriod_ms);
     void logStatus();
     void SetDirectionalInhibit(direction_inhibit_type_t Inhibit);
@@ -53,22 +53,22 @@ class StepperMotor
     void EnforceDirectionalInhibit(void);
 
     // GPIO pins
-    gpio_num_t stepPin;
-    gpio_num_t dirPin;
+    gpio_num_t m_stepPin;
+    gpio_num_t m_dirPin;
 
     // Motion parameters
-    volatile int32_t stepCount;
-    volatile int8_t direction;
-    volatile bool stepState;
-     float CurrentSpeed_degps;
-     float TargetSpeed_degps;
-     float SpeedIncrement_hz;
-    direction_inhibit_type_t DirectionalInhibit;
+    volatile int32_t m_stepCount;
+    volatile int8_t m_direction;
+    volatile bool m_stepState;
+    float m_CurrentSpeed_degps;
+    float m_TargetSpeed_degps;
+    float m_SpeedIncrement_hz;
+    direction_inhibit_type_t m_DirectionalInhibit;
 
     // Acceleration parameter
     float m_AccelLimit_degps2;
     float m_SpeedLimit_degps;
-       float m_StepSize_deg;
+    float m_StepSize_deg;
 
     // GPTimer handle for the step timer
     gptimer_handle_t step_timer;
