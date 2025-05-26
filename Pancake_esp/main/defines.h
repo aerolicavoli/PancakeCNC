@@ -11,7 +11,6 @@
         {                                                                                          \
             ESP_LOGE("ERROR", "ESP_ERROR_CHECK failed: %s", esp_err_to_name(err));                 \
             vTaskDelay(pdMS_TO_TICKS(2000)); /* Delay for 2 seconds to allow log output */         \
-            esp_restart();                   /* Restart the system */                              \
         }                                                                                          \
     } while (0)
 

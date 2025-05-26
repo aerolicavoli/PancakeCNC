@@ -1,4 +1,7 @@
-idf_component_register(SRCS "GeneralGuidance.cpp" "StepperMotor.cpp"
+idf_component_register(SRCS "StepperMotor.cpp"
+ "ArchimedeanSpiral.cpp"
+ "Vector2D.cpp"
+ "TrapezoidalJog.cpp"
  "pancake_esp_main.cpp" 
  "Safety.c"
  "MotorControl.cpp"

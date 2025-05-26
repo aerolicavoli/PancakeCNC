@@ -39,7 +39,7 @@ void SafetyTask(void *Parameters)
 
     for (;;)
     {
-        /*
+
         // Read limit switch settings
         s0Lim = gpio_get_level(S0_LIMIT_SWITCH);
         s1Lim = gpio_get_level(S1_LIMIT_SWITCH);
@@ -55,7 +55,6 @@ void SafetyTask(void *Parameters)
             // TODO
         }
 
-*/
         // Control the alive light
         unsigned int frameMod = frameNum % alivePeriod;
         if (0 == frameMod)
@@ -69,23 +68,22 @@ void SafetyTask(void *Parameters)
 
         frameNum++;
 
+        /*
+                // Acquire the mutex before updating shared data
+                if (xSemaphoreTake(telemetry_mutex, pdMS_TO_TICKS(100)) == pdTRUE)
+                {
+                    telemetry_data.temp_F = 4; // TODO
+                    telemetry_data.S0LimitSwitch = s0Lim;
+                    telemetry_data.S1LimitSwitch = s1Lim;
 
-/*
-        // Acquire the mutex before updating shared data
-        if (xSemaphoreTake(telemetry_mutex, pdMS_TO_TICKS(100)) == pdTRUE)
-        {
-            telemetry_data.temp_F = 4; // TODO
-            telemetry_data.S0LimitSwitch = s0Lim;
-            telemetry_data.S1LimitSwitch = s1Lim;
-
-            // Release the mutex
-            xSemaphoreGive(telemetry_mutex);
-        }
-        else
-        {
-            ESP_LOGW("MotorControl", "Failed to acquire telemetry mutex");
-        }
-    */
+                    // Release the mutex
+                    xSemaphoreGive(telemetry_mutex);
+                }
+                else
+                {
+                    ESP_LOGW("MotorControl", "Failed to acquire telemetry mutex");
+                }
+            */
         // Delay 10ms
         vTaskDelay(pdMS_TO_TICKS(10));
     }

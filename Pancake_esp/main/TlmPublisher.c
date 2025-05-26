@@ -432,12 +432,17 @@ void TlmPublisherTask(void *Parameters)
             // Add telemetry data to buffer
             add_data_to_buffer("tipPos_X_m", "data", telemetry_data.tipPos_X_m, timestamp);
             add_data_to_buffer("tipPos_Y_m", "data", telemetry_data.tipPos_Y_m, timestamp);
-            // add_data_to_buffer("S0_LimitSwitch", "data", localTlm.S0LimitSwitch, timestamp);
+            
+            add_data_to_buffer("S0_LimitSwitch", "data", localTlm.S0LimitSwitch, timestamp);
             add_data_to_buffer("S0_Pos_deg", "data", telemetry_data.S0MotorTlm.Position_deg, timestamp); 
             add_data_to_buffer("S0_Speed_degps", "data", telemetry_data.S0MotorTlm.Speed_degps, timestamp); 
-            //add_data_to_buffer("S1_LimitSwitch", "data", localTlm.S1LimitSwitch, timestamp);
+            
+            add_data_to_buffer("S1_LimitSwitch", "data", localTlm.S1LimitSwitch, timestamp);
             add_data_to_buffer("S1_Pos_deg", "data", telemetry_data.S1MotorTlm.Position_deg, timestamp); 
             add_data_to_buffer("S1_Speed_degps", "data", telemetry_data.S1MotorTlm.Speed_degps, timestamp);
+
+            //add_data_to_buffer("Pump_Pos_deg", "data", telemetry_data.PumpMotorTlm.Position_deg, timestamp); 
+            add_data_to_buffer("Pump_Speed_degps", "data", telemetry_data.PumpMotorTlm.Speed_degps, timestamp);
         }
         else
         {

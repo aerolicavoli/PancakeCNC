@@ -24,9 +24,10 @@ extern "C"
 
         // Start the tasks
         SafetyStart();
-        MotorControlStart();
         PiUIStart();
         // UIStart();
+        MotorControlStart();
+
 
         TlmPublisherInitAndStart();
     }

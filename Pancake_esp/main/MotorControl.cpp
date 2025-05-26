@@ -50,7 +50,7 @@ void MotorControlStart() { xTaskCreate(MotorControlTask, TAG, 8000, NULL, 1, NUL
 
 void MotorControlTask(void *Parameters)
 {
-    vTaskDelay(pdMS_TO_TICKS(30000)); // Wait for coms to init
+    vTaskDelay(pdMS_TO_TICKS(20000)); // Wait for coms to init
 
     // 100hz motor control loop
     unsigned int motorUpdatePeriod_Ticks = pdMS_TO_TICKS(MOTOR_CONTROL_PERIOD_MS);
@@ -77,9 +77,9 @@ void MotorControlTask(void *Parameters)
 
     // Temp hard coded array of instruction
     static cnc_instruction_t instruction_array[4] = {
-        {GuidanceMode::E_ARCHIMEDEANSPIRAL, {0.0014f, 0.2f, 0.2f, 0.1f}},
+        {GuidanceMode::E_ARCHIMEDEANSPIRAL, {0.0014f, 0.05f, 0.1f, 0.1f}},
         {GuidanceMode::E_STOP, {2000}},
-        {GuidanceMode::E_ARCHIMEDEANSPIRAL, {0.0014f, 0.2f, -0.2f, 0.1f}},
+        {GuidanceMode::E_ARCHIMEDEANSPIRAL, {0.0014f, 0.05f, -0.1f, 0.1f}},
         {GuidanceMode::E_STOP, {2000}}};
 
     int instruction_index = 0;
@@ -111,12 +111,13 @@ void MotorControlTask(void *Parameters)
                     Vector2D center = {config.center_x, config.center_y};
                     spiral.set_center(center);
                     currentGuidance = &spiral;
+                    start_motor();
                     break;
                 }
                 case GuidanceMode::E_TRAPEZOIDALJOG:
                 {
                     ESP_LOGI(TAG, "Starting E_TRAPEZOIDALJOG");
-
+                    start_motor();
                     // LinearJogConfig_t config =
                     // current_instruction.guidance_config.linear_jog_config;
                     break;
@@ -128,6 +129,7 @@ void MotorControlTask(void *Parameters)
                     StopConfig_t config = current_instruction.guidance_config.stop_config;
                     stopGuidance.SetTimeout(config.timeout_ms);
                     currentGuidance = &stopGuidance;
+                    start_motor();
                     break;
                 }
                 default:
@@ -161,7 +163,13 @@ void MotorControlTask(void *Parameters)
         // Get target position this frame
         guidanceMode = currentGuidance->GetTargetPosition(deltaTime_ms, pos_m, target_m);
 
-        CartToAng(target_S0_deg, target_S1_deg, target_m);
+        if (CartToAng(target_S0_deg, target_S1_deg, target_m)  == ESP_ERR_INVALID_ARG)
+        {
+            ESP_LOGE(TAG, "Target position %.2f X %.2f Y is unreachable. Stopping", target_m.x, target_m.y);
+            stop_motor();
+            vTaskDelay(portMAX_DELAY);
+            continue;
+        }
 
         // Control motor speed using a simple proportional law.
         // Possible future work could explicitly or numerically solve for rate commands
@@ -230,7 +238,11 @@ void MotorControlTask(void *Parameters)
 
         if ((frameNum % reportPeriod_frames) == 0)
         {
-            PumpMotor.logStatus();
+            S0Motor.logStatus();
+            //S1Motor.logStatus();
+            //PumpMotor.logStatus();
+            ESP_LOGI(TAG, "S0 Position: %.2f deg | S0 Target Position: %.2f deg",localS0Tlm.Position_deg, target_S0_deg);
+
         }
 
         vTaskDelay(motorUpdatePeriod_Ticks);
