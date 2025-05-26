@@ -1,4 +1,7 @@
 #include "MotorControl.h"
+#include "GPIOAssignments.h"
+#include "ArchimedeanSpiral.h"
+#include "PanMath.h"
 
 const char *TAG = "CNCControl";
 
@@ -21,6 +24,12 @@ void start_motor();
 void stop_motor();
 
 motor_command_t command;
+
+// Create an instance of the ArchimedeanSpiral class
+static ArchimedeanSpiral spiral(0.0007, 0.1, Vector2D{0.2, 0.2});
+
+// Temp hard coded array of instruction
+static cnc_instruction_t instruction_array[50];
 
 void MotorControlInit()
 {
@@ -48,23 +57,87 @@ void MotorControlTask(void *Parameters)
     unsigned int reportPeriod_frames = 1000;
 
     unsigned int frameNum = 0;
-    // CNCMode currentMode = E_STOPPED;
 
-    float pos_X_m, pos_Y_m, target_X_m, target_Y_m, target_S0_deg, target_S1_deg;
-    pos_X_m = pos_Y_m = target_X_m = target_Y_m = 0.0f;
+    Vector2D pos_m, target_m;
+    float target_S0_deg, target_S1_deg;
     target_S0_deg = target_S1_deg = 0.0f;
 
     motor_tlm_t localS0Tlm;
     motor_tlm_t localS1Tlm;
     motor_tlm_t localPumpTlm;
 
-    // Temp
-    float theta_rd = 0.0;
-    float r_m = 0.0;
+    GuidanceMode guidanceMode = GuidanceMode::E_NEXT;
+    float deltaTime_s = MOTOR_CONTROL_PERIOD_MS / 1000.0f;
+
+    StopGuidance stopGuidance(0);
+    GeneralGuidance *currentGuidance = &spiral;
+
+    // Temp hard coded array of instruction
+    static cnc_instruction_t instruction_array[50] = {
+        {GuidanceMode::E_ARCHIMEDEANSPIRAL, {0.0007f, 0.2f, 0.2f, 0.1f}},
+        {GuidanceMode::E_STOP, {0}},
+        {GuidanceMode::E_ARCHIMEDEANSPIRAL, {0.0007f, 0.2f, 0.2f, 0.1f}},
+        {GuidanceMode::E_STOP, {0}}};
+
+    int instruction_index = 0;
 
     for (;;)
     {
         HandleCommandQueue();
+
+        // Check if the current instruction is valid
+        if (instruction_index < sizeof(instruction_array) && guidanceMode == GuidanceMode::E_NEXT)
+        {
+
+            // Get the current instruction
+            cnc_instruction_t current_instruction = instruction_array[instruction_index];
+            instruction_index++;
+
+            // Configure the guidance mode based on the current instruction
+            guidanceMode = current_instruction.guidance_mode;
+
+            switch (current_instruction.guidance_mode)
+            {
+                case GuidanceMode::E_ARCHIMEDEANSPIRAL:
+                {
+                    ArchimedeanSpiralConfig_t config =
+                        current_instruction.guidance_config.archimedean_spiral_config;
+                    spiral.set_spiral_constant(config.spiral_constant);
+                    Vector2D center = {config.center_x, config.center_y};
+                    spiral.set_center(center);
+                    currentGuidance = &spiral;
+                    break;
+                }
+                case GuidanceMode::E_TRAPEZOIDALJOG:
+                {
+                    // LinearJogConfig_t config =
+                    // current_instruction.guidance_config.linear_jog_config;
+                    break;
+                }
+                case GuidanceMode::E_STOP:
+                {
+                    StopConfig_t config = current_instruction.guidance_config.stop_config;
+                    stopGuidance.SetTimeout(config.timeout_ms);
+                    currentGuidance = &stopGuidance;
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+        else if (guidanceMode != GuidanceMode::E_NEXT)
+        {
+            // End of instruction array reached
+            ESP_LOGI(TAG, "End of instruction array reached");
+            CNCEnabled = false;        // Stop the motor
+            vTaskDelay(portMAX_DELAY); // Stop the task
+        }
+        else
+        {
+            // Get target position this frame
+            GuidanceMode nextGuidanceMode =
+                currentGuidance->GetTargetPosition(deltaTime_s, pos_m, target_m);
+        }
 
         // Copy local tlm
         PumpMotor.GetTlm(&localPumpTlm);
@@ -72,21 +145,13 @@ void MotorControlTask(void *Parameters)
         S1Motor.GetTlm(&localS1Tlm);
 
         // Compute current pos vel
-        AngToCart(localS0Tlm.Position_deg, localS1Tlm.Position_deg, pos_X_m, pos_Y_m);
+        Vector2D tempPos = AngToCart(localS0Tlm.Position_deg, localS1Tlm.Position_deg);
+        pos_m = tempPos;
 
         // Get target position this frame
-        // Temporary arceedian spiral
-        r_m = theta_rd * 0.0007;
-        target_X_m = 0.2 + sinf(theta_rd) * r_m;
-        target_Y_m = 0.2 + cosf(theta_rd) * r_m;
+        guidanceMode = currentGuidance->GetTargetPosition(deltaTime_s, pos_m, target_m);
 
-        // Stop after a given number of cycles
-        if (theta_rd < M_PI * 2.0 * 5)
-        {
-            theta_rd = theta_rd + 0.001;
-        }
-
-        CartToAng(target_S0_deg, target_S1_deg, target_X_m, target_Y_m);
+        CartToAng(target_S0_deg, target_S1_deg, target_m);
 
         // Control motor speed using a simple proportional law.
         // Possible future work could explicitly or numerically solve for rate commands
@@ -123,8 +188,8 @@ void MotorControlTask(void *Parameters)
             memcpy(&telemetry_data.S0MotorTlm, &localS0Tlm, sizeof localS0Tlm);
             memcpy(&telemetry_data.S1MotorTlm, &localS1Tlm, sizeof localS1Tlm);
 
-            telemetry_data.tipPos_X_m = pos_X_m;
-            telemetry_data.tipPos_Y_m = pos_Y_m;
+            telemetry_data.tipPos_X_m = pos_m.x;
+            telemetry_data.tipPos_Y_m = pos_m.y;
 
             // Read the limit switch switch and adjust inhibits
             if (telemetry_data.S0LimitSwitch)
