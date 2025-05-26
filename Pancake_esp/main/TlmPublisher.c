@@ -10,8 +10,8 @@ const int WIFI_FAIL_BIT = BIT1;
 // Telemetry buffer settings
 #define BUFFER_SIZE 4096
 #define DST_CAP 4096  // worst-case compressed size
-#define BUFFER_ADD_PERIOD_MS 1000
-#define TRANSMITPERIOD_CYCLES 4 // Transmit every 4 buffer add cycles
+#define BUFFER_ADD_PERIOD_MS 500
+#define TRANSMITPERIOD_CYCLES 6
 #define WIFI_CONNECT_TIMEOUT_MS 30000
 #define MAX_RETRY_COUNT 5
 
@@ -255,7 +255,7 @@ void add_log_to_buffer(const char *message)
     int64_t timestamp;
     struct timeval tv;
     gettimeofday(&tv, NULL);
-    timestamp = (int64_t)tv.tv_sec + (int64_t)tv.tv_usec/1000000L;
+    timestamp = (int64_t)tv.tv_sec * 1000.0 + (int64_t)tv.tv_usec/1000L;
 
     int written = snprintf(telemetry_buffer + buffer_index, BUFFER_SIZE - buffer_index,
         "logs,level=info,source=myApp message=\"%s\",timestamp=%lld\n", message, timestamp);
@@ -413,7 +413,7 @@ void TlmPublisherTask(void *Parameters)
         //ESP_LOGI(TAG, "TlmPublisherTask: %u", uxHighWaterMark);
 
         gettimeofday(&tv, NULL);
-        timestamp = (int64_t)tv.tv_sec + (int64_t)tv.tv_usec/1000000L;
+        timestamp = (int64_t)tv.tv_sec * 1000.0 + (int64_t)tv.tv_usec/1000L;
 
         // Acquire the mutex before updating shared data
         if (true) // xSemaphoreTake(telemetry_mutex, pdMS_TO_TICKS(100)) == pdTRUE)
@@ -433,12 +433,11 @@ void TlmPublisherTask(void *Parameters)
             add_data_to_buffer("tipPos_X_m", "data", telemetry_data.tipPos_X_m, timestamp);
             add_data_to_buffer("tipPos_Y_m", "data", telemetry_data.tipPos_Y_m, timestamp);
             // add_data_to_buffer("S0_LimitSwitch", "data", localTlm.S0LimitSwitch, timestamp);
-            // add_data_to_buffer("S0_Pos_deg", "data", localTlm.S0MotorTlm.Position_deg,
-            // timestamp); add_data_to_buffer("S0_Speed_degps", "data",
-            // localTlm.S0MotorTlm.Speed_degps, timestamp); add_data_to_buffer("S1_LimitSwitch",
-            // "data", localTlm.S1LimitSwitch, timestamp); add_data_to_buffer("S1_Pos_deg", "data",
-            // localTlm.S1MotorTlm.Position_deg, timestamp); add_data_to_buffer("S1_Speed_degps",
-            // "data", localTlm.S1MotorTlm.Speed_degps, timestamp);
+            add_data_to_buffer("S0_Pos_deg", "data", telemetry_data.S0MotorTlm.Position_deg, timestamp); 
+            add_data_to_buffer("S0_Speed_degps", "data", telemetry_data.S0MotorTlm.Speed_degps, timestamp); 
+            //add_data_to_buffer("S1_LimitSwitch", "data", localTlm.S1LimitSwitch, timestamp);
+            add_data_to_buffer("S1_Pos_deg", "data", telemetry_data.S1MotorTlm.Position_deg, timestamp); 
+            add_data_to_buffer("S1_Speed_degps", "data", telemetry_data.S1MotorTlm.Speed_degps, timestamp);
         }
         else
         {
@@ -493,7 +492,7 @@ void TlmPublisherTask(void *Parameters)
 void send_data_to_influxdb(const char *data, size_t length)
 {
     char url[512];
-    snprintf(url, sizeof(url), "%s?bucket=%s&precision=s", INFLUXDB_URL, INFLUXDB_BUCKET);
+    snprintf(url, sizeof(url), "%s?bucket=%s&precision=ms", INFLUXDB_URL, INFLUXDB_BUCKET);
 
     esp_http_client_config_t config = {
         .url = url,

@@ -11,7 +11,7 @@ class ArchimedeanSpiral : public GeneralGuidance
     ArchimedeanSpiral(float spiral_constant_mprad, float max_diameter_m, Vector2D center_m);
     ~ArchimedeanSpiral() override = default;
 
-    GuidanceMode GetTargetPosition(float DeltaTime_s, Vector2D CurPos_m,
+    GuidanceMode GetTargetPosition(unsigned int DeltaTime_ms, Vector2D CurPos_m,
                                    Vector2D &CmdPos_m) override;
 
   public:
@@ -27,6 +27,10 @@ class ArchimedeanSpiral : public GeneralGuidance
     Vector2D m_center_m;
     float m_current_angle_ = 0.0f;
     float m_max_radius_m;
+    float theta_rad = 0.0;
+    float m_MaxSpiralRate_radps = 1.0;
+    float m_Speed_mps = 0.02f; // Not used, but can be set if needed
+
 };
 
 #endif // ARCHIMEDEAN_SPIRAL_H

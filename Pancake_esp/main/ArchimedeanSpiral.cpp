@@ -8,17 +8,29 @@ ArchimedeanSpiral::ArchimedeanSpiral(float spiral_constant_mprad, float max_radi
 {
 }
 
-GuidanceMode ArchimedeanSpiral::GetTargetPosition(float DeltaTime_s, Vector2D CurPos_m,
+GuidanceMode ArchimedeanSpiral::GetTargetPosition(unsigned int DeltaTime_ms, Vector2D CurPos_m,
                                                   Vector2D &CmdPos_m)
 {
-    static float theta_rad = 0.0;
     float radius_m;
 
     radius_m = theta_rad * m_spiral_constant_mprad;
     CmdPos_m.x = m_center_m.x + sinf(theta_rad) * radius_m;
     CmdPos_m.y = m_center_m.y + cosf(theta_rad) * radius_m;
 
-    theta_rad = theta_rad + DeltaTime_s * 0.1; // Adjust increment based on DeltaTime
+    float spiralRate_rdps;
+    // Rate limited
+    if (m_MaxSpiralRate_radps * radius_m < m_Speed_mps)
+    {
+        spiralRate_rdps = m_MaxSpiralRate_radps;
+    }
+    // Linear speed limited
+    else
+    {
+        spiralRate_rdps = m_Speed_mps / radius_m;
+    }
+
+    theta_rad = theta_rad + DeltaTime_ms * spiralRate_rdps * 0.001f;
+    
     if (radius_m > m_max_radius_m)
     {
         return GuidanceMode::E_NEXT;
