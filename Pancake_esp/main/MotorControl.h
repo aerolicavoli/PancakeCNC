@@ -1,29 +1,77 @@
-#ifndef MOTORCONTROL_H
-#define MOTORCONTROL_H
 
-#include "GPIOAssignments.h"
-#include "PiUI.h"
-#include "StepperMotor.h"
-#include "defines.h"
-#include "esp_attr.h"
-#include "esp_log.h"
-#include "esp_types.h"
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+#ifndef MOTOR_CONTROL_H
+#define MOTOR_CONTROL_H
+
+
+#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "freertos/queue.h"
-#include <cmath>
-#include "PanMath.h"
+#include "driver/gpio.h"
+#include "esp_log.h"
+#include "freertos/semphr.h"
+#include <stdint.h> // Added for fixed-width integer types
 
+#include "StepperMotor.h"
+#include "Vector2D.h"
+#include "GeneralGuidance.h"
+
+
+extern QueueHandle_t cnc_command_queue;
+extern SemaphoreHandle_t telemetry_mutex;
+
+
+extern telemetry_data_t telemetry_data;
+
+// Function declarations
 void MotorControlInit();
 void MotorControlStart();
 void MotorControlTask(void *Parameters);
 void HandleCommandQueue(void);
 
-enum CNCMode
+// Guidance configuration structures
+typedef struct
 {
-    E_STOPPED = 0,
-    E_SINETEST = 1,
-    E_CARTEASIANQUEUE = 2,
-    E_LASTMODE = 3
-};
+    float spiral_constant;
+    float spiral_rate;
+    float center_x;
+    float center_y;
+    float max_radius;
+} ArchimedeanSpiralConfig_t;
 
-#endif // MOTORCONTROL_H
+typedef struct
+{
+    float target_position_x;
+    float target_position_y;
+    float speed;
+} LinearJogConfig_t;
+
+typedef struct
+{
+    // No parameters for Stop mode
+    int32_t timeout_ms;
+} StopConfig_t;
+
+typedef union
+{
+    ArchimedeanSpiralConfig_t archimedean_spiral_config;
+    LinearJogConfig_t linear_jog_config;
+    StopConfig_t stop_config;
+} guidanceConfiguration;
+
+// CNC instruction structure
+typedef struct
+{
+    GuidanceMode guidance_mode;
+    guidanceConfiguration guidance_config;
+} cnc_instruction_t;
+
+#endif
+#ifdef __cplusplus
+}
+#endif
