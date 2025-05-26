@@ -12,7 +12,7 @@
 
 void SafetyInit();
 void SafetyStart();
-void SafetyTask( void *Parameters );
+void SafetyTask(void *Parameters);
 void EnableMotors();
 void SetLimitSwitchPolicy(bool HardStopOnLimit);
 #endif // SAFETY_H
