@@ -101,7 +101,8 @@ void StepperMotor::logStatus()
     portENTER_CRITICAL(&mux);
     int32_t steps = m_stepCount;
     portEXIT_CRITICAL(&mux);
-    ESP_LOGI(name, "Step Count: %ld | Speed: %.2f deg/s | Target Speed: %.2f deg/s", (long int)steps, speed, m_TargetSpeed_degps);
+    ESP_LOGI(name, "Step Count: %ld | Speed: %.2f deg/s | Target Speed: %.2f deg/s",
+             (long int)steps, speed, m_TargetSpeed_degps);
 }
 
 // Step timer ISR callback

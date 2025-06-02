@@ -30,7 +30,7 @@ GuidanceMode ArchimedeanSpiral::GetTargetPosition(unsigned int DeltaTime_ms, Vec
     }
 
     theta_rad = theta_rad + DeltaTime_ms * spiralRate_rdps * 0.001f;
-    
+
     if (radius_m > m_max_radius_m)
     {
         return GuidanceMode::E_NEXT;

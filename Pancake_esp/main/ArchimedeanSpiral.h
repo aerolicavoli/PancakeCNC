@@ -25,12 +25,10 @@ class ArchimedeanSpiral : public GeneralGuidance
   private:
     float m_spiral_constant_mprad;
     Vector2D m_center_m;
-    float m_current_angle_ = 0.0f;
     float m_max_radius_m;
     float theta_rad = 0.0;
-    float m_MaxSpiralRate_radps = 1.0;
-    float m_Speed_mps = 0.02f; // Not used, but can be set if needed
-
+    float m_MaxSpiralRate_radps = 0.5;
+    float m_Speed_mps = 0.01f; // Not used, but can be set if needed
 };
 
 #endif // ARCHIMEDEAN_SPIRAL_H

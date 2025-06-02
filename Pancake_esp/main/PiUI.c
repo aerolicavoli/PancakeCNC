@@ -16,6 +16,9 @@ Write software for the Serial Communication Handler.
 
 #include "PiUI.h"
 
+telemetry_data_t telemetry_data;
+SemaphoreHandle_t telemetry_mutex;
+
 static const char *TAG = "SerialCommHandler";
 
 QueueHandle_t cnc_command_queue = NULL; // Define the queue
@@ -33,6 +36,12 @@ static int uart_vprintf(const char *str, va_list args)
     return len;
 }
 
+void EnableLoggingOverUART()
+{
+    // Set the log output function to use UART
+    esp_log_set_vprintf(uart_vprintf);
+}
+
 void PiUIInit()
 {
     // Configure UART2 parameters
@@ -45,8 +54,7 @@ void PiUIInit()
     uart_set_pin(UART_NUM, UART_TX_PIN, UART_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
     uart_driver_install(UART_NUM, UART_BUF_SIZE, UART_BUF_SIZE, 0, NULL, 0);
 
-    // Set the log output function to use UART
-    esp_log_set_vprintf(uart_vprintf);
+    EnableLoggingOverUART();
 
     // Test logging
     ESP_LOGI(TAG, "UART Initialized");
@@ -88,8 +96,8 @@ void SerialCommunicationTask(void *pvParameters)
 
         // UBaseType_t stack_high_water_mark = uxTaskGetStackHighWaterMark(NULL);
         // ESP_LOGI(TAG, "Stack High Water Mark: %u", stack_high_water_mark);
-        
-       // ESP_LOGI(TAG, "Alive");
+
+        // ESP_LOGI(TAG, "Alive");
 
         vTaskDelay(pdMS_TO_TICKS(100)); // Adjust delay as needed
     }
