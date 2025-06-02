@@ -26,8 +26,9 @@ class GeneralGuidance
      * @param CmdPos_m Output: Target position in meters.
      * @return GuidanceMode The next guidance mode.
      */
-    // TODO, re-work interface to allow guidance to specify speeds for both motors. This is useful for homing and in the 
-    // event I ever get around to solving the inverse kinematics problem for speed
+    // TODO, re-work interface to allow guidance to specify speeds for both motors. This is useful
+    // for homing and in the event I ever get around to solving the inverse kinematics problem for
+    // speed
     virtual GuidanceMode GetTargetPosition(unsigned int DeltaTime_ms, Vector2D CurPos_m,
                                            Vector2D &CmdPos_m) = 0;
 };

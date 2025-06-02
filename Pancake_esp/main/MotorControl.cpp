@@ -5,7 +5,6 @@
 #include <cmath> // For std::isnan, std::isinf
 #include <array>
 
-
 const char *TAG = "CNCControl";
 
 bool CNCEnabled = false;
@@ -75,19 +74,16 @@ void MotorControlTask(void *Parameters)
     GeneralGuidance *currentGuidance = &spiral;
 
     // Temp hard coded array of instruction
-static constexpr std::array<cnc_instruction_t, 4> instruction_array {{
-    { GuidanceMode::E_ARCHIMEDEANSPIRAL,
-      { .archimedean_spiral_config = { 0.0014f, 0.02f,  0.1f, 0.1f, 0.03f } } },
+    static constexpr std::array<cnc_instruction_t, 4> instruction_array{
+        {{GuidanceMode::E_ARCHIMEDEANSPIRAL,
+          {.archimedean_spiral_config = {0.0014f, 0.02f, 0.1f, 0.1f, 0.03f}}},
 
-    { GuidanceMode::E_STOP,
-      { .stop_config = { 2000 } } },
+         {GuidanceMode::E_STOP, {.stop_config = {2000}}},
 
-    { GuidanceMode::E_ARCHIMEDEANSPIRAL,
-      { .archimedean_spiral_config = { 0.0014f, 0.02f, -0.1f, 0.1f, 0.03f } } },
+         {GuidanceMode::E_ARCHIMEDEANSPIRAL,
+          {.archimedean_spiral_config = {0.0014f, 0.02f, -0.1f, 0.1f, 0.03f}}},
 
-    { GuidanceMode::E_STOP,
-      { .stop_config = { 2000 } } }
-}};
+         {GuidanceMode::E_STOP, {.stop_config = {2000}}}}};
 
     int instruction_index = 0;
 
@@ -126,7 +122,7 @@ static constexpr std::array<cnc_instruction_t, 4> instruction_array {{
         // Check if the current instruction is valid
         if (instruction_index < instruction_array.size() && guidanceMode == GuidanceMode::E_NEXT)
         {
-            ESP_LOGI(TAG,"New instruction %d\n",instruction_index);
+            ESP_LOGI(TAG, "New instruction %d\n", instruction_index);
             vTaskDelay(pdMS_TO_TICKS(3000));
             // Get the current instruction
             const auto &current_instruction = instruction_array[instruction_index++];
@@ -142,7 +138,7 @@ static constexpr std::array<cnc_instruction_t, 4> instruction_array {{
 
                     ArchimedeanSpiralConfig_t config =
                         current_instruction.guidance_config.archimedean_spiral_config;
-                    
+
                     Vector2D center = {config.center_x, config.center_y};
 
                     spiral.set_center(center);
@@ -150,7 +146,7 @@ static constexpr std::array<cnc_instruction_t, 4> instruction_array {{
                     currentGuidance = &spiral;
                     start_motor();
 
-                     ESP_LOGI(TAG, "Motor started");
+                    ESP_LOGI(TAG, "Motor started");
                     vTaskDelay(pdMS_TO_TICKS(6000));
                     break;
                 }
