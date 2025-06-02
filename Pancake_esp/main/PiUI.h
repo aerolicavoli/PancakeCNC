@@ -19,6 +19,7 @@ extern "C"
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#include "esp_heap_caps.h"
 
 #define STX 0x02 // Start delimiter
 #define ETX 0x03 // End delimiter
@@ -60,10 +61,12 @@ extern "C"
     } telemetry_data_t;
 
     // Global telemetry data
-    static telemetry_data_t telemetry_data;
+    extern telemetry_data_t telemetry_data;
+
+    void EnableLoggingOverUART(void);
 
     // Mutex to protect access to telemetry data
-    static SemaphoreHandle_t telemetry_mutex;
+    extern SemaphoreHandle_t telemetry_mutex;
 
     void PiUIInit();
     void PiUIStart();

@@ -12,7 +12,6 @@ extern "C"
 #include "UI.h"
 #include "MotorControl.h"
 
-
     void app_main(void)
     {
         esp_log_level_set("wifi", ESP_LOG_WARN);
@@ -27,7 +26,6 @@ extern "C"
         PiUIStart();
         // UIStart();
         MotorControlStart();
-
 
         TlmPublisherInitAndStart();
     }
