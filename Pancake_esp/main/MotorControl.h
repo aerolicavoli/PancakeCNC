@@ -54,7 +54,7 @@ extern "C"
         int32_t timeout_ms;
     } StopConfig_t;
 
-    typedef union __attribute__((aligned(4)))   // or (packed, aligned(4))
+    typedef union __attribute__((aligned(4))) // or (packed, aligned(4))
     {
         ArchimedeanSpiralConfig_t archimedean_spiral_config;
         LinearJogConfig_t linear_jog_config;
@@ -67,7 +67,6 @@ extern "C"
         GuidanceMode guidance_mode;
         guidanceConfiguration guidance_config;
     } cnc_instruction_t;
-
 
 #endif
 #ifdef __cplusplus
