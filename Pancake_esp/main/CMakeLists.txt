@@ -1,7 +1,7 @@
 idf_component_register(SRCS "StepperMotor.cpp"
  "ArchimedeanSpiral.cpp"
+ "SerialParser.cpp"
  "Vector2D.cpp"
- "TrapezoidalJog.cpp"
  "pancake_esp_main.cpp" 
  "Safety.c"
  "MotorControl.cpp"

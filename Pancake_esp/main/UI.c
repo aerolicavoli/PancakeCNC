@@ -4,7 +4,7 @@
 // Numbers of the LED in the strip
 #define NUM_LEDS 1
 // 10MHz resolution, 1 tick = 0.1us (led strip needs a high resolution)
-#define LED_STRIP_RMT_RES_HZ  (10 * 1000 * 1000)
+#define LED_STRIP_RMT_RES_HZ (10 * 1000 * 1000)
 
 static adc_oneshot_unit_handle_t adc_handle = NULL;
 static adc_cali_handle_t adc_cali_handle = NULL;
@@ -17,8 +17,8 @@ led_strip_handle_t configure_led(void)
 {
     // LED strip general initialization, according to your led board design
     led_strip_config_t strip_config = {
-        .strip_gpio_num = ADDRESSABLE_LEDS,   // The GPIO that connected to the LED strip's data line
-        .max_leds = NUM_LEDS,        // The number of LEDs in the strip,
+        .strip_gpio_num = ADDRESSABLE_LEDS, // The GPIO that connected to the LED strip's data line
+        .max_leds = NUM_LEDS,               // The number of LEDs in the strip,
         .led_pixel_format = LED_PIXEL_FORMAT_GRB, // Pixel format of your LED strip
         .led_model = LED_MODEL_WS2812,            // LED strip model
         .flags.invert_out = false,                // whether to invert the output signal
@@ -29,9 +29,10 @@ led_strip_handle_t configure_led(void)
 #if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 0, 0)
         .rmt_channel = 0,
 #else
-        .clk_src = RMT_CLK_SRC_DEFAULT,        // different clock source can lead to different power consumption
+        .clk_src =
+            RMT_CLK_SRC_DEFAULT, // different clock source can lead to different power consumption
         .resolution_hz = LED_STRIP_RMT_RES_HZ, // RMT counter clock frequency
-        .flags.with_dma = false,               // DMA feature is available on ESP target like ESP32-S3
+        .flags.with_dma = false, // DMA feature is available on ESP target like ESP32-S3
 #endif
     };
 
@@ -79,7 +80,6 @@ void UIInit()
     }
 
     led_strip = configure_led();
-
 }
 
 void UIStart() { xTaskCreate(UITask, "UI", configMINIMAL_STACK_SIZE, NULL, 1, NULL); }
@@ -97,7 +97,7 @@ void UITask(void *Parameters)
     float temperature_c = 0.0;
 
     bool led_on_off = false;
-    
+
     // Read raw value from ADC
     for (;;)
     {
@@ -116,15 +116,19 @@ void UITask(void *Parameters)
         ESP_LOGI(TAG, "Raw ADC: %d, Voltage: %d mV, Temperature: %.2f °C", temp_reading, temp_mv,
                  temperature_c);
 
-        if (led_on_off) {
+        if (led_on_off)
+        {
             /* Set the LED pixel using RGB from 0 (0%) to 255 (100%) for each color */
-            for (int i = 0; i < NUM_LEDS; i++) {
+            for (int i = 0; i < NUM_LEDS; i++)
+            {
                 ESP_ERROR_CHECK(led_strip_set_pixel(led_strip, i, 5, 5, 5));
             }
             /* Refresh the strip to send data */
             ESP_ERROR_CHECK(led_strip_refresh(led_strip));
             ESP_LOGI(TAG, "LED ON!");
-        } else {
+        }
+        else
+        {
             /* Set all LED off to clear all pixels */
             ESP_ERROR_CHECK(led_strip_clear(led_strip));
             ESP_LOGI(TAG, "LED OFF!");

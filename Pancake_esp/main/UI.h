@@ -19,7 +19,6 @@
 #include "led_strip.h"
 #include "esp_err.h"
 
-
 void UIInit();
 void UIStart();
 void UITask(void *Parameters);

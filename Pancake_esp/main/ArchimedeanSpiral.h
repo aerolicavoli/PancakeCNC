@@ -5,30 +5,44 @@
 #include "GeneralGuidance.h"
 #include "Vector2D.h"
 
+struct SpiralConfig
+{
+    float spiral_constant;
+    float spiral_rate;
+    float center_x;
+    float center_y;
+    float max_radius;
+};
+
 class ArchimedeanSpiral : public GeneralGuidance
 {
   public:
-    ArchimedeanSpiral(float spiral_constant_mprad, float max_diameter_m, Vector2D center_m);
     ~ArchimedeanSpiral() override = default;
 
-    GuidanceMode GetTargetPosition(unsigned int DeltaTime_ms, Vector2D CurPos_m,
-                                   Vector2D &CmdPos_m) override;
+    bool GetTargetPosition(unsigned int DeltaTime_ms, Vector2D CurPos_m,
+                           Vector2D &CmdPos_m) override;
 
-  public:
-    void set_spiral_constant(float spiral_constant_mprad)
+    // Common to all guidance types
+    uint8_t GetOpCode() const { return CNC_WAIT_OPCODE; }
+    const void *GetConfig() const override { return &Config; }
+    size_t GetConfigLength() const override { return sizeof(Config); }
+
+    bool ConfigureFromMessage(ParsedMessag_t &Message) override
     {
-        m_spiral_constant_mprad = spiral_constant_mprad;
+        if (Message.OpCode != GetOpCode() || Message.payload_length != sizeof(Config))
+        {
+            return false;
+        }
+        memcpy(&Config, Message.payload, sizeof(Config));
+        return true;
     }
-    void set_center(Vector2D center_m) { m_center_m = center_m; }
-    void set_max_radius(float max_radius_m) { m_max_radius_m = max_radius_m; }
+
+    SpiralConfig Config;
 
   private:
-    float m_spiral_constant_mprad;
-    Vector2D m_center_m;
-    float m_max_radius_m;
     float theta_rad = 0.0;
     float m_MaxSpiralRate_radps = 0.5;
-    float m_Speed_mps = 0.01f; // Not used, but can be set if needed
+    float m_Speed_mps = 0.01f;
 };
 
 #endif // ARCHIMEDEAN_SPIRAL_H

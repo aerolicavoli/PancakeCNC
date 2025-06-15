@@ -1,21 +1,14 @@
 #include "ArchimedeanSpiral.h"
 #include <math.h>
 
-ArchimedeanSpiral::ArchimedeanSpiral(float spiral_constant_mprad, float max_radius_m,
-                                     Vector2D center_m)
-    : m_spiral_constant_mprad(spiral_constant_mprad), m_center_m(center_m),
-      m_max_radius_m(max_radius_m)
-{
-}
-
-GuidanceMode ArchimedeanSpiral::GetTargetPosition(unsigned int DeltaTime_ms, Vector2D CurPos_m,
-                                                  Vector2D &CmdPos_m)
+bool ArchimedeanSpiral::GetTargetPosition(unsigned int DeltaTime_ms, Vector2D CurPos_m,
+                                          Vector2D &CmdPos_m)
 {
     float radius_m;
 
-    radius_m = theta_rad * m_spiral_constant_mprad;
-    CmdPos_m.x = m_center_m.x + sinf(theta_rad) * radius_m;
-    CmdPos_m.y = m_center_m.y + cosf(theta_rad) * radius_m;
+    radius_m = theta_rad * Config.spiral_constant;
+    CmdPos_m.x = Config.center_x + sinf(theta_rad) * radius_m;
+    CmdPos_m.y = Config.center_y + cosf(theta_rad) * radius_m;
 
     float spiralRate_rdps;
     // Rate limited
@@ -31,9 +24,9 @@ GuidanceMode ArchimedeanSpiral::GetTargetPosition(unsigned int DeltaTime_ms, Vec
 
     theta_rad = theta_rad + DeltaTime_ms * spiralRate_rdps * 0.001f;
 
-    if (radius_m > m_max_radius_m)
+    if (radius_m > Config.max_radius)
     {
-        return GuidanceMode::E_NEXT;
+        return true;
     }
-    return GuidanceMode::E_ARCHIMEDEANSPIRAL;
+    return false;
 }

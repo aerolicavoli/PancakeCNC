@@ -1,7 +1,7 @@
 #include "TrapezoidalJog.h"
 #include <math.h>
 
-GuidanceMode TrapezoidalJog::GetTargetPosition(unsigned int DeltaTime_ms, Vector2D CurPos_m,
+bool TrapezoidalJog::GetTargetPosition(unsigned int DeltaTime_ms, Vector2D CurPos_m,
                                                Vector2D &CmdPos_m)
 {
     Vector2D distance_m = m_target_position_m - CurPos_m;

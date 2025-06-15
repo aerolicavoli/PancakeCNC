@@ -2,6 +2,7 @@
 
 #include "StepperMotor.h"
 #include "defines.h"
+#include "MotorControl.h"
 
 extern "C"
 {
@@ -10,7 +11,6 @@ extern "C"
 #include "Safety.h"
 #include "TlmPublisher.h"
 #include "UI.h"
-#include "MotorControl.h"
 
     void app_main(void)
     {

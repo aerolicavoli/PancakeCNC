@@ -27,11 +27,43 @@ void stop_motor();
 
 motor_command_t command;
 
+void WriteTestProgram(GeneralGuidance *GuidancePtr, std::vector<std::uint8_t> &stream)
+{
+    stream.push_back(GuidancePtr->GetOpCode());
+    stream.push_back(static_cast<std::uint8_t>(sizeof(GuidancePtr->GetConfigLength())));
+
+    const auto *raw = reinterpret_cast<const std::uint8_t *>(GuidancePtr->GetConfig());
+    stream.insert(stream.end(), raw, raw + GuidancePtr->GetConfigLength());
+}
+
+std::vector<uint8_t> TestProgram;
+
 // Create an instance of the ArchimedeanSpiral class
-static ArchimedeanSpiral spiral(0.0007, 0.1, Vector2D{0.2, 0.2});
+static ArchimedeanSpiral spiral();
 
 void MotorControlInit()
 {
+
+    // Configure a spiral
+    ArchimedeanSpiral spiralTemp;
+    WaitGuidance waitTemp;
+
+    spiralTemp.Config.spiral_constant = 0.0014f;
+    spiralTemp.Config.spiral_rate = 0.05f;
+    spiralTemp.Config.center_x = 0.05f;
+    spiralTemp.Config.center_y = 0.05f;
+    WriteTestProgram(&spiralTemp, TestProgram);
+
+    waitTemp.Config.timeout_ms = 5000; // 5 seconds
+    WriteTestProgram(&waitTemp, TestProgram);
+
+    spiralTemp.Config.center_x = -0.05f;
+    WriteTestProgram(&spiralTemp, TestProgram);
+
+    WriteTestProgram(&waitTemp, TestProgram);
+
+    ESP_LOGI(TAG, "Packed stream (%d bytes):", TestProgram.size());
+    ESP_LOG_BUFFER_HEX_LEVEL(TAG, TestProgram.data(), TestProgram.size(), ESP_LOG_INFO);
 
     gpio_reset_pin(PUMP_MOTOR_PULSE);
     gpio_set_direction(PUMP_MOTOR_PULSE, GPIO_MODE_OUTPUT);
@@ -54,11 +86,6 @@ void MotorControlTask(void *Parameters)
     // 100hz motor control loop
     unsigned int motorUpdatePeriod_Ticks = pdMS_TO_TICKS(MOTOR_CONTROL_PERIOD_MS);
 
-    // 1hz motor loging
-    unsigned int reportPeriod_frames = 1000;
-
-    unsigned int frameNum = 0;
-
     Vector2D pos_m, target_m;
     float target_S0_deg, target_S1_deg;
     target_S0_deg = target_S1_deg = 0.0f;
@@ -67,141 +94,83 @@ void MotorControlTask(void *Parameters)
     motor_tlm_t localS1Tlm;
     motor_tlm_t localPumpTlm;
 
-    GuidanceMode guidanceMode = GuidanceMode::E_NEXT;
+    uint8_t OpCode = 0;
     unsigned int deltaTime_ms = MOTOR_CONTROL_PERIOD_MS;
 
-    StopGuidance stopGuidance(0);
-    GeneralGuidance *currentGuidance = &spiral;
+    bool instructionComplete = true;
+    size_t ProgramIdex = 0;
 
-    // Temp hard coded array of instruction
-    static constexpr std::array<cnc_instruction_t, 4> instruction_array{
-        {{GuidanceMode::E_ARCHIMEDEANSPIRAL,
-          {.archimedean_spiral_config = {0.0014f, 0.02f, 0.1f, 0.1f, 0.03f}}},
+    GeneralGuidance *currentGuidance = nullptr;
 
-         {GuidanceMode::E_STOP, {.stop_config = {2000}}},
-
-         {GuidanceMode::E_ARCHIMEDEANSPIRAL,
-          {.archimedean_spiral_config = {0.0014f, 0.02f, -0.1f, 0.1f, 0.03f}}},
-
-         {GuidanceMode::E_STOP, {.stop_config = {2000}}}}};
-
-    int instruction_index = 0;
+    // Instantiate guidance objects
+    ArchimedeanSpiral spiralGuidance;
+    WaitGuidance waitGuidance;
 
     for (;;)
     {
-        // HandleCommandQueue();
         // Copy local tlm
         PumpMotor.GetTlm(&localPumpTlm);
         S0Motor.GetTlm(&localS0Tlm);
         S1Motor.GetTlm(&localS1Tlm);
 
+        // Compute the current CNC position
         AngToCart(localS0Tlm.Position_deg, localS1Tlm.Position_deg, pos_m);
 
-        // Explicit NaN/Inf checks
-        bool s0_pos_bad =
-            std::isnan(localS0Tlm.Position_deg) || std::isinf(localS0Tlm.Position_deg);
-        bool s1_pos_bad =
-            std::isnan(localS1Tlm.Position_deg) || std::isinf(localS1Tlm.Position_deg);
-        bool pos_m_x_bad = std::isnan(pos_m.x) || std::isinf(pos_m.x);
-        bool pos_m_y_bad = std::isnan(pos_m.y) || std::isinf(pos_m.y);
-
-        if (s0_pos_bad || s1_pos_bad || pos_m_x_bad || pos_m_y_bad)
+        // Process Instructions
+        if (ProgramIdex >= TestProgram.size())
         {
-            ESP_LOGE(
-                TAG,
-                "NaN/Inf Detected: S0_pos_bad=%d, S1_pos_bad=%d, pos_m.x_bad=%d, pos_m.y_bad=%d",
-                s0_pos_bad, s1_pos_bad, pos_m_x_bad, pos_m_y_bad);
-            vTaskDelay(pdMS_TO_TICKS(3000)); // Delay for error logging
+            ESP_LOGI(TAG, "End of program reached");
+            stop_motor();
+            vTaskDelay(portMAX_DELAY); // Stop the task
+            continue;
         }
-
-        target_m = pos_m; // This is the user-commented line
-        // If you re-enable the line above, the log below will show its effect.
-        // If it remains commented, target_m will retain its value from the previous iteration or
-        // initialization.
-
-        // Check if the current instruction is valid
-        if (instruction_index < instruction_array.size() && guidanceMode == GuidanceMode::E_NEXT)
+        else if (instructionComplete)
         {
-            ESP_LOGI(TAG, "New instruction %d\n", instruction_index);
-            vTaskDelay(pdMS_TO_TICKS(3000));
-            // Get the current instruction
-            const auto &current_instruction = instruction_array[instruction_index++];
-
-            instruction_index++;
-
-            switch (current_instruction.guidance_mode)
+            // Read the next OpCode
+            ParsedMessag_t message;
+            if (!ParseMessage(TestProgram.data(), ProgramIdex, TestProgram.size(), message))
             {
-                case GuidanceMode::E_ARCHIMEDEANSPIRAL:
+                ESP_LOGE(TAG, "Failed to parse instruction at index %d", ProgramIdex);
+                stop_motor();
+                vTaskDelay(portMAX_DELAY); // Stop the task
+                continue;                  // Skip to the next iteration
+            }
+            OpCode = message.OpCode;
+            instructionComplete = false;
+
+            switch (OpCode)
+            {
+                case CNC_SPIRAL_OPCODE:
                 {
-                    ESP_LOGI(TAG, "Starting E_ARCHIMEDEANSPIRAL");
-                    vTaskDelay(pdMS_TO_TICKS(6000));
-
-                    ArchimedeanSpiralConfig_t config =
-                        current_instruction.guidance_config.archimedean_spiral_config;
-
-                    Vector2D center = {config.center_x, config.center_y};
-
-                    spiral.set_center(center);
-
-                    currentGuidance = &spiral;
-                    start_motor();
-
-                    ESP_LOGI(TAG, "Motor started");
-                    vTaskDelay(pdMS_TO_TICKS(6000));
+                    currentGuidance = &spiralGuidance;
                     break;
                 }
-                case GuidanceMode::E_TRAPEZOIDALJOG:
+                case CNC_JOG_OPCODE:
                 {
-                    ESP_LOGI(TAG, "Starting E_TRAPEZOIDALJOG");
-                    start_motor();
-                    // LinearJogConfig_t config =
-                    // current_instruction.guidance_config.linear_jog_config;
+                    // TODO
                     break;
                 }
-                case GuidanceMode::E_STOP:
+                case CNC_WAIT_OPCODE:
                 {
-                    ESP_LOGI(TAG, "Starting E_STOP");
-
-                    StopConfig_t config = current_instruction.guidance_config.stop_config;
-                    stopGuidance.SetTimeout(config.timeout_ms);
-                    currentGuidance = &stopGuidance;
-                    start_motor();
+                    currentGuidance = &waitGuidance;
                     break;
                 }
                 default:
-                    break;
-            }
-        }
-        else if (instruction_index >= sizeof(instruction_array))
-        {
-            // End of instruction array reached
-            ESP_LOGI(TAG, "End of instruction array reached");
-            CNCEnabled = false;        // Stop the motor
-            vTaskDelay(portMAX_DELAY); // Stop the task
-        }
-        else
-        {
-            // Get target position this frame
-            ESP_LOGI(TAG,
-                     "Before GetTargetPosition: pos_m.x=%.4f, pos_m.y=%.4f, target_m.x(in)=%.4f, "
-                     "target_m.y(in)=%.4f",
-                     pos_m.x, pos_m.y, target_m.x, target_m.y);
-            vTaskDelay(pdMS_TO_TICKS(6000));
+                {
+                    ESP_LOGE(TAG, "Unknown OpCode: 0x%02X", OpCode);
+                    stop_motor();
+                    vTaskDelay(portMAX_DELAY);
+                    continue;
+                }
 
-            guidanceMode = currentGuidance->GetTargetPosition(deltaTime_ms, pos_m, target_m);
-
-            ESP_LOGI(TAG,
-                     "After GetTargetPosition: mode=%d, target_m.x(out)=%.4f, target_m.y(out)=%.4f",
-                     (int)guidanceMode, target_m.x, target_m.y);
-            bool target_m_x_bad_after = std::isnan(target_m.x) || std::isinf(target_m.x);
-            bool target_m_y_bad_after = std::isnan(target_m.y) || std::isinf(target_m.y);
-            if (target_m_x_bad_after || target_m_y_bad_after)
-            {
-                ESP_LOGE(TAG, "NaN/Inf in target_m after GetTargetPosition: x_bad=%d, y_bad=%d",
-                         target_m_x_bad_after, target_m_y_bad_after);
+                    // Configure the guidance object
+                    currentGuidance->ConfigureFromMessage(message);
             }
-            vTaskDelay(pdMS_TO_TICKS(3000));
+
+            ESP_LOGI(TAG, "OpCode: 0x%02X", OpCode);
         }
+
+        instructionComplete = currentGuidance->GetTargetPosition(deltaTime_ms, pos_m, target_m);
 
         MathErrorCodes CarToAngRet = CartToAng(target_S0_deg, target_S1_deg, target_m);
 
@@ -280,17 +249,7 @@ void MotorControlTask(void *Parameters)
         //     ESP_LOGW(TAG, "Failed to acquire telemetry mutex");
         // }
 
-        if ((frameNum % reportPeriod_frames) == 0)
-        {
-            // S0Motor.logStatus();
-            // S1Motor.logStatus();
-            // PumpMotor.logStatus();
-            // ESP_LOGI(TAG, "S0 Position: %.2f deg | S0 Target Position: %.2f
-            // deg",localS0Tlm.Position_deg, target_S0_deg);
-        }
-
         vTaskDelay(motorUpdatePeriod_Ticks);
-        frameNum++;
     }
 }
 
