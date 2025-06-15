@@ -24,7 +24,8 @@
 
     extern telemetry_data_t telemetry_data;
 
-    // Function declarations
+    void StartCNC();
+    void StopCNC();
     void MotorControlInit();
     void MotorControlStart();
     void MotorControlTask(void *Parameters);
