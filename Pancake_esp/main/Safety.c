@@ -39,7 +39,6 @@ void SafetyTask(void *Parameters)
 
     for (;;)
     {
-
         // Read limit switch settings
         s0Lim = gpio_get_level(S0_LIMIT_SWITCH);
         s1Lim = gpio_get_level(S1_LIMIT_SWITCH);
@@ -47,12 +46,11 @@ void SafetyTask(void *Parameters)
         // Make shutdown decisions
         if (hardStopOnLimitSwitch && (s0Lim || s1Lim))
         {
-            gpio_set_level(PUMP_MOTOR_ENABLE, false);
-            gpio_set_level(PUMP_MOTOR_ENABLE, false);
+            DisableMotors();
         }
         else if (false)
         {
-            // TODO
+            EnableMotors();
         }
 
         // Control the alive light
@@ -68,22 +66,9 @@ void SafetyTask(void *Parameters)
 
         frameNum++;
 
-        /*
-                // Acquire the mutex before updating shared data
-                if (xSemaphoreTake(telemetry_mutex, pdMS_TO_TICKS(100)) == pdTRUE)
-                {
-                    telemetry_data.temp_F = 4; // TODO
-                    telemetry_data.S0LimitSwitch = s0Lim;
-                    telemetry_data.S1LimitSwitch = s1Lim;
+        telemetry_data.S0LimitSwitch = s0Lim;
+        telemetry_data.S1LimitSwitch = s1Lim;
 
-                    // Release the mutex
-                    xSemaphoreGive(telemetry_mutex);
-                }
-                else
-                {
-                    ESP_LOGW("MotorControl", "Failed to acquire telemetry mutex");
-                }
-            */
         // Delay 10ms
         vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -92,7 +77,13 @@ void SafetyTask(void *Parameters)
 void EnableMotors()
 {
     gpio_set_level(PUMP_MOTOR_ENABLE, true);
-    gpio_set_level(PUMP_MOTOR_ENABLE, true);
+    gpio_set_level(S0S1_MOTOR_ENABLE, true);
+}
+
+void DisableMotors()
+{
+    gpio_set_level(PUMP_MOTOR_ENABLE, false);
+    gpio_set_level(S0S1_MOTOR_ENABLE, false);
 }
 
 void SetLimitSwitchPolicy(bool HardStopOnLimit)

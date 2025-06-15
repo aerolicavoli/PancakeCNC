@@ -9,6 +9,9 @@ const char *TAG = "CNCControl";
 
 bool CNCEnabled = false;
 
+std::vector<uint8_t> TestProgram;
+motor_command_t command;
+
 static float kp_hz(0.5f);
 
 #define MOTOR_CONTROL_PERIOD_MS 10
@@ -21,11 +24,6 @@ static StepperMotor S1Motor(S1_MOTOR_PULSE, S1_MOTOR_DIR, 400.0, 400.0, 0.4166 *
                             "S1MOTOR");
 static StepperMotor PumpMotor(PUMP_MOTOR_PULSE, PUMP_MOTOR_DIR, 200.0, 200, 0.9 / 4.0, "PUMPMOTOR");
 
-// Motor control functions
-void start_motor();
-void stop_motor();
-
-motor_command_t command;
 
 void WriteTestProgram(GeneralGuidance *GuidancePtr, std::vector<std::uint8_t> &stream)
 {
@@ -36,10 +34,7 @@ void WriteTestProgram(GeneralGuidance *GuidancePtr, std::vector<std::uint8_t> &s
     stream.insert(stream.end(), raw, raw + GuidancePtr->GetConfigLength());
 }
 
-std::vector<uint8_t> TestProgram;
 
-// Create an instance of the ArchimedeanSpiral class
-static ArchimedeanSpiral spiral();
 
 void MotorControlInit()
 {
@@ -94,9 +89,6 @@ void MotorControlTask(void *Parameters)
     motor_tlm_t localS1Tlm;
     motor_tlm_t localPumpTlm;
 
-    uint8_t OpCode = 0;
-    unsigned int deltaTime_ms = MOTOR_CONTROL_PERIOD_MS;
-
     bool instructionComplete = true;
     size_t ProgramIdex = 0;
 
@@ -120,7 +112,7 @@ void MotorControlTask(void *Parameters)
         if (ProgramIdex >= TestProgram.size())
         {
             ESP_LOGI(TAG, "End of program reached");
-            stop_motor();
+            StopCNC();
             vTaskDelay(portMAX_DELAY); // Stop the task
             continue;
         }
@@ -131,14 +123,13 @@ void MotorControlTask(void *Parameters)
             if (!ParseMessage(TestProgram.data(), ProgramIdex, TestProgram.size(), message))
             {
                 ESP_LOGE(TAG, "Failed to parse instruction at index %d", ProgramIdex);
-                stop_motor();
+                StopCNC();
                 vTaskDelay(portMAX_DELAY); // Stop the task
                 continue;                  // Skip to the next iteration
             }
-            OpCode = message.OpCode;
             instructionComplete = false;
 
-            switch (OpCode)
+            switch (message.OpCode)
             {
                 case CNC_SPIRAL_OPCODE:
                 {
@@ -157,8 +148,8 @@ void MotorControlTask(void *Parameters)
                 }
                 default:
                 {
-                    ESP_LOGE(TAG, "Unknown OpCode: 0x%02X", OpCode);
-                    stop_motor();
+                    ESP_LOGE(TAG, "Unknown OpCode: 0x%02X", message.OpCode);
+                    StopCNC();
                     vTaskDelay(portMAX_DELAY);
                     continue;
                 }
@@ -167,10 +158,10 @@ void MotorControlTask(void *Parameters)
                     currentGuidance->ConfigureFromMessage(message);
             }
 
-            ESP_LOGI(TAG, "OpCode: 0x%02X", OpCode);
+            ESP_LOGI(TAG, "OpCode: 0x%02X", message.OpCode);
         }
 
-        instructionComplete = currentGuidance->GetTargetPosition(deltaTime_ms, pos_m, target_m);
+        instructionComplete = currentGuidance->GetTargetPosition(MOTOR_CONTROL_PERIOD_MS, pos_m, target_m);
 
         MathErrorCodes CarToAngRet = CartToAng(target_S0_deg, target_S1_deg, target_m);
 
@@ -179,7 +170,7 @@ void MotorControlTask(void *Parameters)
             const char *reason = (CarToAngRet == E_UNREACHABLE_TOO_CLOSE) ? "close" : "far";
             ESP_LOGE(TAG, "Unreachable target position %.2f X %.2f Y is too %s. Stopping",
                      target_m.x, target_m.y, reason);
-            stop_motor();
+            StopCNC();
             vTaskDelay(portMAX_DELAY);
             continue;
         }
@@ -241,14 +232,6 @@ void MotorControlTask(void *Parameters)
             S1Motor.SetDirectionalInhibit(StepperMotor::E_NO_INHIBIT);
         }
 
-        // Release the mutex
-        //    xSemaphoreGive(telemetry_mutex);
-        // }
-        // else
-        // {
-        //     ESP_LOGW(TAG, "Failed to acquire telemetry mutex");
-        // }
-
         vTaskDelay(motorUpdatePeriod_Ticks);
     }
 }
@@ -261,12 +244,12 @@ void HandleCommandQueue(void)
         {
             case MOTOR_CMD_START:
                 ESP_LOGI(TAG, "Starting motor");
-                start_motor();
+                StartCNC();
                 break;
 
             case MOTOR_CMD_STOP:
                 ESP_LOGI(TAG, "Stopping motor");
-                stop_motor();
+                StopCNC();
                 break;
 
             default:
@@ -276,11 +259,13 @@ void HandleCommandQueue(void)
     }
 }
 
-// Implementations of motor control functions
-void start_motor() { CNCEnabled = true; }
+void StartCNC()
+{ 
+    CNCEnabled = true;
+}
 
-void stop_motor()
-{
+void StopCNC()
+{    
     CNCEnabled = false;
 
     // Command Speed
@@ -292,4 +277,7 @@ void stop_motor()
     S0Motor.UpdateSpeed(true);
     S1Motor.UpdateSpeed(true);
     PumpMotor.UpdateSpeed(true);
+
+
+
 }
