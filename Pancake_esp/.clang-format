@@ -5,6 +5,6 @@ IndentWidth: 4
 BreakBeforeBraces: Allman
 AlignAfterOpenBracket: Align
 ColumnLimit: 100
-SortIncludes: true
+SortIncludes: false
 IndentCaseLabels: true
 ReflowComments: true

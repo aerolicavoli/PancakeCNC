@@ -4,6 +4,13 @@
 #include "GeneralGuidance.h"
 #include "Vector2D.h"
 
+struct JogConfig
+{
+    float target_position_x;
+    float target_position_y;
+    float speed;
+};
+
 class TrapezoidalJog : public GeneralGuidance
 {
   public:
