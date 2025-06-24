@@ -186,7 +186,7 @@ C_Inv_2_TIMES_S0L_TIMES_S1L_1pm2 = 1.0 / (2.0 * stage0Length_m*stage1Length_m);
 targetHypSqrd_m2 = dot(stage1Pos_GRD_m,stage1Pos_GRD_m);
 targetHyp_m = sqrt(targetHypSqrd_m2);
 targetAng_rd = atan(stage1Pos_GRD_m(1)/stage1Pos_GRD_m(2));
-hypAng_rd = acos((C_S0L2_PLUS_S1L2_m-targetHypSqrd_m2) * C_Inv_2_TIMES_S0L_TIMES_S1L_1pm2;
+hypAng_rd = acos((C_S0L2_PLUS_S1L2_m-targetHypSqrd_m2) * C_Inv_2_TIMES_S0L_TIMES_S1L_1pm2);
 innerAng_rd = acos((C_S0L2_MINUS_S1L2_m+targetHypSqrd_m2)/(2*stage0Length_m*targetHyp_m));
 
 % TODO be smart about selecting which of the two solutions to use.

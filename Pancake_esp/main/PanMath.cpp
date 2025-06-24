@@ -41,6 +41,12 @@ MathErrorCodes CartToAng(float &S0Ang_deg, float &S1Ang_deg, Vector2D Pos_m)
 {
     // Compute the squared distance from the origin to the target point (r^2)
     float targetDistSquared_m2 = dot(Pos_m, Pos_m);
+    
+    if (targetDistSquared_m2 < EPSILON)
+    {
+        // If the target is at the origin, return an error
+        return E_UNREACHABLE_TOO_CLOSE;
+    }
 
     // Compute the distance to the target point (r)
     float targetDist_m = sqrtf(targetDistSquared_m2);
@@ -65,8 +71,30 @@ MathErrorCodes CartToAng(float &S0Ang_deg, float &S1Ang_deg, Vector2D Pos_m)
                                      (2.0 * C_S0Length_m * targetDist_m))) *
                 C_RADToDEG;
     S1Ang_deg =
-        (acos(C_S0L2_PLUS_S1L2_m2 - targetDistSquared_m2 * C_Inv_2_TIMES_S0L_TIMES_S1L_1pm2) -
+        (acos((C_S0L2_PLUS_S1L2_m2 - targetDistSquared_m2) * C_Inv_2_TIMES_S0L_TIMES_S1L_1pm2) -
          M_PI) *
         C_RADToDEG;
     return E_OK;
 }
+
+/*
+
+global stage0Length_m stage1Length_m
+C_S0L2_PLUS_S1L2_m = stage0Length_m^2+stage1Length_m^2;
+C_S0L2_MINUS_S1L2_m = stage0Length_m^2-stage1Length_m^2;
+C_Inv_2_TIMES_S0L_TIMES_S1L_1pm2 = 1.0 / (2.0 * stage0Length_m*stage1Length_m);
+
+targetHypSqrd_m2 = dot(stage1Pos_GRD_m,stage1Pos_GRD_m);
+targetHyp_m = sqrt(targetHypSqrd_m2);
+targetAng_rd = atan(stage1Pos_GRD_m(1)/stage1Pos_GRD_m(2));
+hypAng_rd = acos((C_S0L2_PLUS_S1L2_m-targetHypSqrd_m2) * C_Inv_2_TIMES_S0L_TIMES_S1L_1pm2);
+innerAng_rd = acos((C_S0L2_MINUS_S1L2_m+targetHypSqrd_m2)/(2*stage0Length_m*targetHyp_m));
+
+% TODO be smart about selecting which of the two solutions to use.
+direction = -1; %-sign(targetAng_rd);
+Stage0Pos_rd = targetAng_rd + direction * innerAng_rd;
+Stage1Pos_rd = -direction * (pi - hypAng_rd);
+
+
+end
+*/

@@ -1,7 +1,5 @@
 
-#include <cstdint>
-#include <vector>
-#include <cstring>
+
 
 #ifndef MOTOR_CONTROL_H
 #define MOTOR_CONTROL_H
@@ -15,6 +13,9 @@
 #include "freertos/semphr.h"
 #include <stdint.h>
 #include "SerialParser.h"
+#include <cstdint>
+#include <vector>
+#include <cstring>
 
 #include "StepperMotor.h"
 #include "Vector2D.h"

@@ -23,7 +23,7 @@ class ArchimedeanSpiral : public GeneralGuidance
                            Vector2D &CmdPos_m) override;
 
     // Common to all guidance types
-    uint8_t GetOpCode() const { return CNC_WAIT_OPCODE; }
+    uint8_t GetOpCode() const { return CNC_SPIRAL_OPCODE; }
     const void *GetConfig() const override { return &Config; }
     size_t GetConfigLength() const override { return sizeof(Config); }
 
@@ -34,6 +34,10 @@ class ArchimedeanSpiral : public GeneralGuidance
             return false;
         }
         memcpy(&Config, Message.payload, sizeof(Config));
+
+        // Reset
+        theta_rad = 0.0f;
+        
         return true;
     }
 
@@ -41,8 +45,8 @@ class ArchimedeanSpiral : public GeneralGuidance
 
   private:
     float theta_rad = 0.0;
-    float m_MaxSpiralRate_radps = 0.5;
-    float m_Speed_mps = 0.01f;
+    float m_MaxSpiralRate_radps = 0.1;
+    float m_Speed_mps = 0.005f;
 };
 
 #endif // ARCHIMEDEAN_SPIRAL_H

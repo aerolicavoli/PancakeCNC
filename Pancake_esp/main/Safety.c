@@ -40,8 +40,8 @@ void SafetyTask(void *Parameters)
     for (;;)
     {
         // Read limit switch settings
-        s0Lim = gpio_get_level(S0_LIMIT_SWITCH);
-        s1Lim = gpio_get_level(S1_LIMIT_SWITCH);
+        s0Lim = false; // gpio_get_level(S0_LIMIT_SWITCH);
+        s1Lim = false; // gpio_get_level(S1_LIMIT_SWITCH);
 
         // Make shutdown decisions
         if (hardStopOnLimitSwitch && (s0Lim || s1Lim))
