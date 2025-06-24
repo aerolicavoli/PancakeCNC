@@ -62,6 +62,9 @@ class WaitGuidance : public GeneralGuidance
             return false;
         }
         memcpy(&Config, Message.payload, sizeof(Config));
+
+        // Reset
+        remaining_time_ms = Config.timeout_ms;
         return true;
     }
 

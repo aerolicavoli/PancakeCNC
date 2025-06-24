@@ -9,9 +9,10 @@ const int WIFI_FAIL_BIT = BIT1;
 
 // Telemetry buffer settings
 #define BUFFER_SIZE 8000
+#define WARN_BUFFER_SIZE 7000
 #define DST_CAP 8000 // worst-case compressed size
-#define BUFFER_ADD_PERIOD_MS 750
-#define TRANSMITPERIOD_CYCLES 3
+#define BUFFER_ADD_PERIOD_MS 600
+#define TRANSMITPERIOD_CYCLES 7
 #define WIFI_CONNECT_TIMEOUT_MS 30000
 #define MAX_RETRY_COUNT 5
 
@@ -20,9 +21,6 @@ static char telemetry_buffer[BUFFER_SIZE];
 static char compressed_data[DST_CAP];
 static size_t buffer_index = 0;
 
-// External mutex for telemetry data
-extern SemaphoreHandle_t telemetry_mutex;
-
 // Task handles
 static TaskHandle_t tlmPublisherTaskHandle = NULL;
 static TaskHandle_t wifiReconnectTaskHandle = NULL;
@@ -30,8 +28,6 @@ static TaskHandle_t wifiReconnectTaskHandle = NULL;
 // WiFi state tracking
 static volatile wifi_connection_state_t wifi_state = WIFI_STATE_INIT;
 static volatile bool wifi_initialized = false;
-
-telemetry_data_t localTlm;
 
 temperature_sensor_handle_t temp_handle = NULL;
 
@@ -268,20 +264,21 @@ void add_log_to_buffer(const char *message)
         }
         else
         {
-            ESP_LOGW(TAG, "Buffer overflow prevented, data not added");
+            ESP_LOGW(TAG, "Buffer overflow");
         }
     }
     else
     {
         ESP_LOGE(TAG, "Error writing to buffer");
     }
+    
 }
 
 void add_data_to_buffer(const char *measurement, const char *field, float value, int64_t timestamp)
 {
     int written =
         snprintf(telemetry_buffer + buffer_index, BUFFER_SIZE - buffer_index,
-                 "%s,location=us-midwest %s=%.2f %lld\n", measurement, field, value, timestamp);
+                 "%s,location=us-midwest %s=%.5f %lld\n", measurement, field, value, timestamp);
 
     if (written > 0)
     {
@@ -401,7 +398,7 @@ void TlmPublisherTask(void *Parameters)
     UBaseType_t uxHighWaterMark;
     int64_t timestamp;
     struct timeval tv;
-
+    bool sendBufferOverflowWarning = true;
     unsigned int frameNum = 0;
 
     // Get converted sensor data
@@ -416,30 +413,37 @@ void TlmPublisherTask(void *Parameters)
         timestamp = (int64_t)tv.tv_sec * 1000.0 + (int64_t)tv.tv_usec / 1000L;
 
         // Acquire the mutex before updating shared data
-        if (true) // xSemaphoreTake(telemetry_mutex, pdMS_TO_TICKS(100)) == pdTRUE)
+        if (true)
         {
+            if (sendBufferOverflowWarning && buffer_index >  WARN_BUFFER_SIZE)
+            {
+                ESP_LOGW(TAG, "Buffer overflow warning: %d bytes used", buffer_index);
+                sendBufferOverflowWarning = false;
+            }
+    
             // Gather hardware telemetry data
             ESP_ERROR_CHECK(temperature_sensor_get_celsius(temp_handle, &tsens_out));
             add_data_to_buffer("espTemp", "data", tsens_out, timestamp);
-
-            // add_log_to_buffer("Test log");
-            //  Copy telemetry data to local variable
-            // memcpy(&localTlm, &telemetry_data, sizeof(telemetry_data));
-
-            // Release the mutex, no more references to telemetry_data below this point
-            // xSemaphoreGive(telemetry_mutex);
 
             // Add telemetry data to buffer
             add_data_to_buffer("tipPos_X_m", "data", telemetry_data.tipPos_X_m, timestamp);
             add_data_to_buffer("tipPos_Y_m", "data", telemetry_data.tipPos_Y_m, timestamp);
 
-            add_data_to_buffer("S0_LimitSwitch", "data", localTlm.S0LimitSwitch, timestamp);
+            add_data_to_buffer("targetPos_X_m", "data", telemetry_data.targetPos_X_m, timestamp);
+            add_data_to_buffer("targetPos_Y_m", "data", telemetry_data.targetPos_Y_m, timestamp);
+
+            add_data_to_buffer("targetPos_S0_deg", "data", telemetry_data.targetPos_S0_deg,
+                               timestamp);
+            add_data_to_buffer("targetPos_S1_deg", "data", telemetry_data.targetPos_S1_deg,
+                               timestamp);
+
+            add_data_to_buffer("S0_LimitSwitch", "data", telemetry_data.S0LimitSwitch, timestamp);
             add_data_to_buffer("S0_Pos_deg", "data", telemetry_data.S0MotorTlm.Position_deg,
                                timestamp);
             add_data_to_buffer("S0_Speed_degps", "data", telemetry_data.S0MotorTlm.Speed_degps,
                                timestamp);
 
-            add_data_to_buffer("S1_LimitSwitch", "data", localTlm.S1LimitSwitch, timestamp);
+            add_data_to_buffer("S1_LimitSwitch", "data", telemetry_data.S1LimitSwitch, timestamp);
             add_data_to_buffer("S1_Pos_deg", "data", telemetry_data.S1MotorTlm.Position_deg,
                                timestamp);
             add_data_to_buffer("S1_Speed_degps", "data", telemetry_data.S1MotorTlm.Speed_degps,

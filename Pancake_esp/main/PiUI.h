@@ -58,6 +58,10 @@ extern "C"
         bool S1LimitSwitch;
         float tipPos_X_m;
         float tipPos_Y_m;
+        float targetPos_X_m;
+        float targetPos_Y_m;
+        float targetPos_S0_deg;
+        float targetPos_S1_deg;
     } telemetry_data_t;
 
     // Global telemetry data
