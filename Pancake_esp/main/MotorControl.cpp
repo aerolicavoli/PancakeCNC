@@ -7,21 +7,18 @@
 
 const char *TAG = "CNCControl";
 
-bool CNCEnabled = false;
-
-std::vector<uint8_t> TestProgram;
-motor_command_t command;
-
 motor_tlm_t LocalS0Tlm;
 motor_tlm_t LocalS1Tlm;
 motor_tlm_t LocalPumpTlm;
+motor_command_t command;
 
-Vector2D Pos_m;
-Vector2D Target_m;
+Vector2D Pos_m{0.0f, 0.0f};
+Vector2D Vel_mps{0.0f, 0.0f};
+Vector2D Target_m{0.0f, 0.0f};
 
-static float kp_hz(0.5f);
+bool CNCEnabled = false;
 
-#define MOTOR_CONTROL_PERIOD_MS 10
+std::vector<uint8_t> TestProgram;
 
 // Create motor instances
 // Step size = gear ratio * motor step size / micro step reduction
@@ -40,15 +37,10 @@ void WriteTestProgram(GeneralGuidance *GuidancePtr, std::vector<std::uint8_t> &s
     stream.insert(stream.end(), raw, raw + GuidancePtr->GetConfigLength());
 }
 
-
-
 void MotorControlInit()
 {
-
-    // Configure a spiral
+    // TODO future work to build the test program externally and then transmit to device
     ArchimedeanSpiral spiralTemp;
-    WaitGuidance waitTemp;
-
     spiralTemp.Config.spiral_constant = 0.002f;
     spiralTemp.Config.spiral_rate = 0.02f;
     spiralTemp.Config.center_x = 0.1f;
@@ -56,18 +48,18 @@ void MotorControlInit()
     spiralTemp.Config.max_radius = 0.025f;
     WriteTestProgram(&spiralTemp, TestProgram);
 
-
+    WaitGuidance waitTemp;
     waitTemp.Config.timeout_ms = 5000; // 5 seconds
     WriteTestProgram(&waitTemp, TestProgram);
-
 
     spiralTemp.Config.center_x = 0.0f;
     WriteTestProgram(&spiralTemp, TestProgram);
 
-
     WriteTestProgram(&waitTemp, TestProgram);
 
+    // Hardware initialization
 
+    // Set pulse pins.  The safety component will handle the enable pins
     gpio_reset_pin(PUMP_MOTOR_PULSE);
     gpio_set_direction(PUMP_MOTOR_PULSE, GPIO_MODE_OUTPUT);
 
@@ -92,36 +84,41 @@ void MotorControlStart() { xTaskCreate(MotorControlTask, TAG, 8000, NULL, 1, NUL
 
 void MotorControlTask(void *Parameters)
 {
-    vTaskDelay(pdMS_TO_TICKS(5000)); // Wait for coms to init
-
-    ESP_LOGE(TAG, "Packed stream (%d bytes):", TestProgram.size());
-
-    for (size_t i = 0; i < TestProgram.size(); i += 16) {
+    // Wait for coms to establish, the print the test program
+    // TODO, move logging the CNC program to a separate task
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    ESP_LOGI(TAG, "Packed stream (%d bytes):", TestProgram.size());
+    for (size_t i = 0; i < TestProgram.size(); i += 16)
+    {
         size_t len = std::min((size_t)16, TestProgram.size() - i);
-        vTaskDelay(pdMS_TO_TICKS(5000)); // Wait for coms to init
-        ESP_LOG_BUFFER_HEX_LEVEL(TAG, &TestProgram[i], len, ESP_LOG_ERROR);
+        vTaskDelay(pdMS_TO_TICKS(1000)); // Wait for coms to init
+        ESP_LOG_BUFFER_HEX_LEVEL(TAG, &TestProgram[i], len, ESP_LOG_INFO);
     }
-
-    //ESP_LOG_BUFFER_HEX_LEVEL(TAG, TestProgram.data(), TestProgram.size(), ESP_LOG_ERROR);
-
-    vTaskDelay(pdMS_TO_TICKS(5000)); // Wait for coms to init
+    vTaskDelay(pdMS_TO_TICKS(1000));
 
     // 100hz motor control loop
-    unsigned int motorUpdatePeriod_Ticks = pdMS_TO_TICKS(MOTOR_CONTROL_PERIOD_MS);
+    const int motorUpdatePeriod_Ticks = pdMS_TO_TICKS(MOTOR_CONTROL_PERIOD_MS);
 
+    // Control parms
+    const float kp_hz(5.0e-1);
+    const float pumpConstant_degpm(1.0e4);
+    const float posTol_m(3.0e-2);
+
+    // Working variables
     float target_S0_deg, target_S1_deg;
     target_S0_deg = target_S1_deg = 0.0f;
 
+    // Program control
     bool instructionComplete = true;
     size_t ProgramIdex = 0;
+    bool pumpThisMode = false;
 
-    GeneralGuidance *currentGuidance = nullptr;
-
-    // Instantiate guidance objects
+    // Guidance objects
     ArchimedeanSpiral spiralGuidance;
     WaitGuidance waitGuidance;
+    GeneralGuidance *currentGuidance = nullptr;
 
-    // Temp
+    // RBF
     CNCEnabled = true;
     for (;;)
     {
@@ -131,12 +128,12 @@ void MotorControlTask(void *Parameters)
         S1Motor.GetTlm(&LocalS1Tlm);
 
         // Compute the current CNC position
-        AngToCart(LocalS0Tlm.Position_deg, LocalS1Tlm.Position_deg, Pos_m);
+        AngToCart(LocalS0Tlm.Position_deg, LocalS1Tlm.Position_deg, LocalS0Tlm.Speed_degps,
+                  LocalS1Tlm.Speed_degps, Pos_m, Vel_mps);
 
+        // If ready for the next instruction
         if (instructionComplete)
         {
-            ESP_LOGE(TAG, "Instruction complete. ProgramIdex: %d", ProgramIdex);
-
             // Process Instructions
             if (CNCEnabled && ProgramIdex >= TestProgram.size())
             {
@@ -163,6 +160,7 @@ void MotorControlTask(void *Parameters)
                 case CNC_SPIRAL_OPCODE:
                 {
                     currentGuidance = &spiralGuidance;
+                    pumpThisMode = true;
                     break;
                 }
                 case CNC_JOG_OPCODE:
@@ -173,6 +171,7 @@ void MotorControlTask(void *Parameters)
                 case CNC_WAIT_OPCODE:
                 {
                     currentGuidance = &waitGuidance;
+                    pumpThisMode = false;
                     break;
                 }
                 default:
@@ -190,7 +189,8 @@ void MotorControlTask(void *Parameters)
             ESP_LOGI(TAG, "OpCode: 0x%02X", message.OpCode);
         }
 
-        instructionComplete = currentGuidance->GetTargetPosition(MOTOR_CONTROL_PERIOD_MS, Pos_m, Target_m);
+        instructionComplete =
+            currentGuidance->GetTargetPosition(MOTOR_CONTROL_PERIOD_MS, Pos_m, Target_m);
 
         MathErrorCodes CarToAngRet = CartToAng(target_S0_deg, target_S1_deg, Target_m);
 
@@ -204,17 +204,25 @@ void MotorControlTask(void *Parameters)
             continue;
         }
 
-        // Control motor speed using a simple proportional law.
-        // Possible future work could explicitly or numerically solve for rate commands
-        // given acceleration limitations.
+        // Control motor speed using a simple proportional law
         S0Motor.setTargetSpeed((target_S0_deg - LocalS0Tlm.Position_deg) * kp_hz);
         S1Motor.setTargetSpeed((target_S1_deg - LocalS1Tlm.Position_deg) * kp_hz);
+
+        // Control pump speed
+        if ((Target_m - Pos_m).magnitude() < posTol_m && pumpThisMode)
+        {
+            // Set the pump speed proportional to the velocity
+            PumpMotor.setTargetSpeed(Vel_mps.magnitude() * pumpConstant_degpm);
+        }
+        else
+        {
+            // If the position error is too large, stop the pump
+            PumpMotor.setTargetSpeed(0.0);
+        }
 
         // Command Speed
         if (CNCEnabled)
         {
-            PumpMotor.setTargetSpeed(3600.0);
-
             // Process speed updates and don't force the speed change
             S0Motor.UpdateSpeed(false);
             S1Motor.UpdateSpeed(false);
@@ -232,9 +240,7 @@ void MotorControlTask(void *Parameters)
             PumpMotor.UpdateSpeed(true);
         }
 
-        // Acquire the mutex before updating shared data
-        //   if (xSemaphoreTake(telemetry_mutex, pdMS_TO_TICKS(100)) == pdTRUE)
-        //   {
+        // TODO improve thread safety before I lose a foot
         memcpy(&telemetry_data.PumpMotorTlm, &LocalPumpTlm, sizeof LocalPumpTlm);
         memcpy(&telemetry_data.S0MotorTlm, &LocalS0Tlm, sizeof LocalS0Tlm);
         memcpy(&telemetry_data.S1MotorTlm, &LocalS1Tlm, sizeof LocalS1Tlm);
@@ -251,7 +257,7 @@ void MotorControlTask(void *Parameters)
         // Read the limit switch switch and adjust inhibits
         if (telemetry_data.S0LimitSwitch)
         {
-            S0Motor.SetDirectionalInhibit(StepperMotor::E_INHIBIT_FORWARD);
+            S0Motor.SetDirectionalInhibit(StepperMotor::E_INHIBIT_BACKWARD);
         }
         else
         {
@@ -294,13 +300,10 @@ void HandleCommandQueue(void)
     }
 }
 
-void StartCNC()
-{ 
-    CNCEnabled = true;
-}
+void StartCNC() { CNCEnabled = true; }
 
 void StopCNC()
-{    
+{
     CNCEnabled = false;
 
     // Command Speed
@@ -312,7 +315,4 @@ void StopCNC()
     S0Motor.UpdateSpeed(true);
     S1Motor.UpdateSpeed(true);
     PumpMotor.UpdateSpeed(true);
-
-
-
 }
