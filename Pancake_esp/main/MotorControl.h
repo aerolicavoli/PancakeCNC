@@ -1,6 +1,5 @@
 
 
-
 #ifndef MOTOR_CONTROL_H
 #define MOTOR_CONTROL_H
 
@@ -21,16 +20,17 @@
 #include "Vector2D.h"
 #include "GeneralGuidance.h"
 
-    extern QueueHandle_t cnc_command_queue;
+#define MOTOR_CONTROL_PERIOD_MS 10
 
-    extern telemetry_data_t telemetry_data;
+extern QueueHandle_t cnc_command_queue;
 
-    void StartCNC();
-    void StopCNC();
-    void MotorControlInit();
-    void MotorControlStart();
-    void MotorControlTask(void *Parameters);
-    void HandleCommandQueue(void);
+extern telemetry_data_t telemetry_data;
+
+void StartCNC();
+void StopCNC();
+void MotorControlInit();
+void MotorControlStart();
+void MotorControlTask(void *Parameters);
+void HandleCommandQueue(void);
 
 #endif
-

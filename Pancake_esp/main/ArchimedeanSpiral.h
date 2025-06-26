@@ -37,7 +37,7 @@ class ArchimedeanSpiral : public GeneralGuidance
 
         // Reset
         theta_rad = 0.0f;
-        
+
         return true;
     }
 

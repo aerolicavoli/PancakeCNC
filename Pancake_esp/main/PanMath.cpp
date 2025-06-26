@@ -37,11 +37,30 @@ void AngToCart(float S0Ang_deg, float S1Ang_deg, Vector2D &CartPos_m)
     CartPos_m.y = ct * C_S0Length_m + cp * C_S1Length_m;
 }
 
+void AngToCart(float S0Ang_deg, float S1Ang_deg, float S0Rate_degps, float S1Rate_degps,
+               Vector2D &CartPos_m, Vector2D &CartVel_mps)
+{
+    float phi_rad = (S0Ang_deg + S1Ang_deg) * C_DEGToRAD;
+    float theta_rad = S0Ang_deg * C_DEGToRAD;
+    float cp = cos(phi_rad);
+    float sp = sin(phi_rad);
+    float ct = cos(theta_rad);
+    float st = sin(theta_rad);
+
+    CartVel_mps.x = S1Rate_degps * C_DEGToRAD * C_S1Length_m * cp +
+                    S0Rate_degps * C_DEGToRAD * C_S0Length_m * ct;
+    CartVel_mps.y = -1.0 * S1Rate_degps * C_DEGToRAD * C_S1Length_m * sp -
+                    S0Rate_degps * C_DEGToRAD * C_S0Length_m * st;
+
+    CartPos_m.x = st * C_S0Length_m + sp * C_S1Length_m;
+    CartPos_m.y = ct * C_S0Length_m + cp * C_S1Length_m;
+}
+
 MathErrorCodes CartToAng(float &S0Ang_deg, float &S1Ang_deg, Vector2D Pos_m)
 {
     // Compute the squared distance from the origin to the target point (r^2)
     float targetDistSquared_m2 = dot(Pos_m, Pos_m);
-    
+
     if (targetDistSquared_m2 < EPSILON)
     {
         // If the target is at the origin, return an error

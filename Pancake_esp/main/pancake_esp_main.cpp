@@ -19,15 +19,13 @@ extern "C"
         PiUIInit();
         SafetyInit();
         //  UIInit();
+        MotorControlInit();
 
         // Start the tasks
         SafetyStart();
         PiUIStart();
         // UIStart();
         TlmPublisherInitAndStart();
-
-        MotorControlInit();
         MotorControlStart();
-
     }
 }

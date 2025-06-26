@@ -1,6 +1,7 @@
 #include "SerialParser.h"
 
-bool ParseMessage(const uint8_t *data, size_t &ReadIndex, const size_t length, ParsedMessag_t &message)
+bool ParseMessage(const uint8_t *data, size_t &ReadIndex, const size_t length,
+                  ParsedMessag_t &message)
 {
     /*
     if (length < 5)

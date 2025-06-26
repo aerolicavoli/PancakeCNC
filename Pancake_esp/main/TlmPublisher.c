@@ -271,7 +271,6 @@ void add_log_to_buffer(const char *message)
     {
         ESP_LOGE(TAG, "Error writing to buffer");
     }
-    
 }
 
 void add_data_to_buffer(const char *measurement, const char *field, float value, int64_t timestamp)
@@ -415,12 +414,12 @@ void TlmPublisherTask(void *Parameters)
         // Acquire the mutex before updating shared data
         if (true)
         {
-            if (sendBufferOverflowWarning && buffer_index >  WARN_BUFFER_SIZE)
+            if (sendBufferOverflowWarning && buffer_index > WARN_BUFFER_SIZE)
             {
                 ESP_LOGW(TAG, "Buffer overflow warning: %d bytes used", buffer_index);
                 sendBufferOverflowWarning = false;
             }
-    
+
             // Gather hardware telemetry data
             ESP_ERROR_CHECK(temperature_sensor_get_celsius(temp_handle, &tsens_out));
             add_data_to_buffer("espTemp", "data", tsens_out, timestamp);
