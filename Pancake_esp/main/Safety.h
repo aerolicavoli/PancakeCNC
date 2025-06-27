@@ -9,6 +9,7 @@
 #include "esp_log.h"
 #include "GPIOAssignments.h"
 #include "PiUI.h"
+#include "driver/temperature_sensor.h"
 
 void SafetyInit();
 void SafetyStart();

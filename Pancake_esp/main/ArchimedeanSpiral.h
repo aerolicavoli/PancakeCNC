@@ -29,7 +29,7 @@ class ArchimedeanSpiral : public GeneralGuidance
 
     bool ConfigureFromMessage(ParsedMessag_t &Message) override
     {
-        if (Message.OpCode != GetOpCode() || Message.payload_length != sizeof(Config))
+        if (Message.OpCode != GetOpCode() || Message.payloadLength != sizeof(Config))
         {
             return false;
         }

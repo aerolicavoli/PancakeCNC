@@ -18,23 +18,23 @@ bool ParseMessage(const uint8_t *data, size_t &ReadIndex, const size_t length,
     */
 
     message.OpCode = data[ReadIndex++];
-    message.payload_length = data[ReadIndex++];
+    message.payloadLength = data[ReadIndex++];
 
     /*
-    if (message.payload_length > (length - 5))
+    if (message.payloadLength > (length - 5))
     {
         // Payload length mismatch
         return false;
     }
         */
 
-    memcpy(message.payload, &data[ReadIndex], message.payload_length);
-    ReadIndex += message.payload_length;
+    memcpy(message.payload, &data[ReadIndex], message.payloadLength);
+    ReadIndex += message.payloadLength;
 
     /*
     // Check checksum
     uint8_t checksum = 0;
-    for (int i = 0; i < message->payload_length; i++)
+    for (int i = 0; i < message->payloadLength; i++)
     {
         checksum ^= message->payload[i];
     }
