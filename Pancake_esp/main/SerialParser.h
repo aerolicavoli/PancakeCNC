@@ -3,10 +3,7 @@
 #define SERIAL_PARSER_H
 
 #include <stdint.h>
-#include <stdarg.h>
-#include <stdio.h>
 #include <string.h>
-#include <stdbool.h>
 
 #define STX 0x02 // Start delimiter
 #define ETX 0x03 // End delimiter
@@ -24,7 +21,7 @@
 typedef struct
 {
     uint8_t OpCode;
-    uint8_t payload_length;
+    uint8_t payloadLength;
     uint8_t payload[256];
 } ParsedMessag_t;
 

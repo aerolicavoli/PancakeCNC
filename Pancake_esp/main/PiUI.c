@@ -1,37 +1,21 @@
-/*
-
-Written with Chat GPT o1-preview.
-
-Prompt:
-I'm building a CNC device. This device uses and ESP32 c3 to solve the inverse kinematics,
-monitor limit switches, generate motor control signals.  I've connected this device via
-serial to a raspberry pi 3b. I wish to both command the esp32 via the pi and receive status
-and telemetry from it. Design a high level architecture to do this. Enumerate the applications,
-their functions, and their interfaces. The resulting commands should find there way into a
-message queue on the esp32. The resulting telemetry should come from querying shared memory esp32.
-
-Write software for the Serial Communication Handler.
-
-*/
-
 #include "PiUI.h"
 
-telemetry_data_t telemetry_data;
+telemetry_data_t TelemetryData;
 SemaphoreHandle_t telemetry_mutex;
 
 static const char *TAG = "SerialCommHandler";
 
-QueueHandle_t cnc_command_queue = NULL; // Define the queue
+QueueHandle_t CNCCommandQueue = NULL; // Define the queue
 
 // UART write function for ESP-IDF logging
-static int uart_vprintf(const char *str, va_list args)
+static int UartVprintf(const char *Str, va_list Args)
 {
-    char log_buffer[256];
-    int len = vsnprintf(log_buffer, sizeof(log_buffer), str, args);
+    char logBuffer[256];
+    int len = vsnprintf(logBuffer, sizeof(logBuffer), Str, Args);
     if (len > 0)
     {
-        size_t payload_length = (len < sizeof(log_buffer)) ? len : sizeof(log_buffer) - 1;
-        send_protocol_message(MSG_TYPE_LOG, (uint8_t *)log_buffer, payload_length);
+        size_t payloadLength = (len < sizeof(logBuffer)) ? len : sizeof(logBuffer) - 1;
+        SendProtocolMessage(MSG_TYPE_LOG, (uint8_t *)logBuffer, payloadLength);
     }
     return len;
 }
@@ -39,18 +23,18 @@ static int uart_vprintf(const char *str, va_list args)
 void EnableLoggingOverUART()
 {
     // Set the log output function to use UART
-    esp_log_set_vprintf(uart_vprintf);
+    esp_log_set_vprintf(UartVprintf);
 }
 
 void PiUIInit()
 {
     // Configure UART2 parameters
-    uart_config_t uart_config = {.baud_rate = UART_BAUD_RATE,
-                                 .data_bits = UART_DATA_8_BITS,
-                                 .parity = UART_PARITY_DISABLE,
-                                 .stop_bits = UART_STOP_BITS_1,
-                                 .flow_ctrl = UART_HW_FLOWCTRL_DISABLE};
-    uart_param_config(UART_NUM, &uart_config);
+    uart_config_t uartConfig = {.baud_rate = UART_BAUD_RATE,
+                                .data_bits = UART_DATA_8_BITS,
+                                .parity = UART_PARITY_DISABLE,
+                                .stop_bits = UART_STOP_BITS_1,
+                                .flow_ctrl = UART_HW_FLOWCTRL_DISABLE};
+    uart_param_config(UART_NUM, &uartConfig);
     uart_set_pin(UART_NUM, UART_TX_PIN, UART_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
     uart_driver_install(UART_NUM, UART_BUF_SIZE, UART_BUF_SIZE, 0, NULL, 0);
 
@@ -60,8 +44,8 @@ void PiUIInit()
     ESP_LOGI(TAG, "UART Initialized");
 
     // Create the command queue
-    cnc_command_queue = xQueueCreate(CNC_COMMAND_QUEUE_LENGTH, sizeof(motor_command_t));
-    if (cnc_command_queue == NULL)
+    CNCCommandQueue = xQueueCreate(CNC_COMMAND_QUEUE_LENGTH, sizeof(motor_command_t));
+    if (CNCCommandQueue == NULL)
     {
         // Handle error: Failed to create queue
         ESP_LOGE(TAG, "Failed to create CNC command queue");
@@ -84,20 +68,15 @@ void SerialCommunicationTask(void *pvParameters)
         {
             ESP_LOGI(TAG, "Data received: %d bytes", len);
 
-            if (parse_message(data, len, &message))
+            if (ParseTheMessage(data, len, &message))
             {
-                route_message(&message);
+                RouteMessage(&message);
             }
             else
             {
                 ESP_LOGW(TAG, "Failed to parse message");
             }
         }
-
-        // UBaseType_t stack_high_water_mark = uxTaskGetStackHighWaterMark(NULL);
-        // ESP_LOGI(TAG, "Stack High Water Mark: %u", stack_high_water_mark);
-
-        // ESP_LOGI(TAG, "Alive");
 
         vTaskDelay(pdMS_TO_TICKS(100)); // Adjust delay as needed
     }
@@ -106,47 +85,47 @@ void SerialCommunicationTask(void *pvParameters)
     vTaskDelete(NULL);
 }
 
-bool parse_message(const uint8_t *data, size_t length, parsed_message_t *message)
+bool ParseTheMessage(const uint8_t *Data, size_t Length, parsed_message_t *Message)
 {
-    if (length < 5)
+    if (Length < 5)
     {
         // Minimum message size not met
         return false;
     }
 
     size_t index = 0;
-    if (data[index++] != STX)
+    if (Data[index++] != STX)
     {
         // Start delimiter not found
         return false;
     }
 
-    message->message_type = data[index++];
-    message->payload_length = data[index++];
+    Message->message_type = Data[index++];
+    Message->payloadLength = Data[index++];
 
-    if (message->payload_length > (length - 5))
+    if (Message->payloadLength > (Length - 5))
     {
         // Payload length mismatch
         return false;
     }
 
-    memcpy(message->payload, &data[index], message->payload_length);
-    index += message->payload_length;
+    memcpy(Message->payload, &Data[index], Message->payloadLength);
+    index += Message->payloadLength;
 
     // Check checksum
     uint8_t checksum = 0;
-    for (int i = 0; i < message->payload_length; i++)
+    for (int i = 0; i < Message->payloadLength; i++)
     {
-        checksum ^= message->payload[i];
+        checksum ^= Message->payload[i];
     }
 
-    if (checksum != data[index++])
+    if (checksum != Data[index++])
     {
         // Checksum mismatch
         return false;
     }
 
-    if (data[index++] != ETX)
+    if (Data[index++] != ETX)
     {
         // End delimiter not found
         return false;
@@ -155,30 +134,30 @@ bool parse_message(const uint8_t *data, size_t length, parsed_message_t *message
     return true;
 }
 
-void route_message(const parsed_message_t *message)
+void RouteMessage(const parsed_message_t *Message)
 {
     motor_command_t commandStruct;
-    switch (message->message_type)
+    switch (Message->message_type)
     {
         case MSG_TYPE_COMMAND:
             // Handle the command
-            switch (message->payload_length)
+            switch (Message->payloadLength)
             {
                 case 3:
-                    commandStruct.arg_2 = message->payload[2];
+                    commandStruct.arg_2 = Message->payload[2];
                     // Intentional fall through
                 case 2:
-                    commandStruct.arg_1 = message->payload[1];
+                    commandStruct.arg_1 = Message->payload[1];
                     // Intentional fall through
                 case 1:
-                    commandStruct.cmd_type = message->payload[0];
-                    xQueueSend(cnc_command_queue, &commandStruct, portMAX_DELAY);
+                    commandStruct.cmd_type = Message->payload[0];
+                    xQueueSend(CNCCommandQueue, &commandStruct, portMAX_DELAY);
                     ESP_LOGI(TAG, "Command message received");
 
                     break;
                 default:
                     ESP_LOGW(TAG, "Command message with incorrect payload size: %d",
-                             message->payload_length);
+                             Message->payloadLength);
             }
 
             break;
@@ -190,13 +169,13 @@ void route_message(const parsed_message_t *message)
             break;
 
         default:
-            ESP_LOGW(TAG, "Unknown message type: 0x%02X", message->message_type);
+            ESP_LOGW(TAG, "Unknown message type: 0x%02X", Message->message_type);
             break;
     }
 }
 
 // Update your telemetry provider function
-void send_protocol_message(uint8_t message_type, const uint8_t *payload, size_t payload_length)
+void SendProtocolMessage(uint8_t MessageType, const uint8_t *Payload, size_t PayloadLength)
 {
     uint8_t buffer[512];
     size_t index = 0;
@@ -204,16 +183,16 @@ void send_protocol_message(uint8_t message_type, const uint8_t *payload, size_t 
     // Start Delimiter
     buffer[index++] = STX;
     // Message Type
-    buffer[index++] = message_type;
+    buffer[index++] = MessageType;
     // Payload Length (limit to 255)
-    uint8_t length = (payload_length > 255) ? 255 : payload_length;
+    uint8_t length = (PayloadLength > 255) ? 255 : PayloadLength;
     buffer[index++] = length;
 
     // Payload with escaping
     uint8_t checksum = 0;
     for (size_t i = 0; i < length; i++)
     {
-        uint8_t byte = payload[i];
+        uint8_t byte = Payload[i];
         checksum ^= byte;
         if (byte == STX || byte == ETX || byte == ESC)
         {
@@ -243,7 +222,7 @@ void telemetry_provider_handle_request()
     if (xSemaphoreTake(telemetry_mutex, pdMS_TO_TICKS(100)) == pdTRUE)
     {
         // Copy the telemetry data
-        current_telemetry = telemetry_data;
+        current_telemetry = TelemetryData;
         // Release the mutex
         xSemaphoreGive(telemetry_mutex);
     }
@@ -254,6 +233,6 @@ void telemetry_provider_handle_request()
     }
 
     // Send the telemetry data
-    send_protocol_message(MSG_TYPE_TELEMETRY, (uint8_t *)&current_telemetry,
-                          sizeof(telemetry_data_t));
+    SendProtocolMessage(MSG_TYPE_TELEMETRY, (uint8_t *)&current_telemetry,
+                        sizeof(telemetry_data_t));
 }

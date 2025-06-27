@@ -105,12 +105,12 @@ void MotorControlTask(void *Parameters)
     const float posTol_m(3.0e-2);
 
     // Working variables
-    float target_S0_deg, target_S1_deg;
-    target_S0_deg = target_S1_deg = 0.0f;
+    float targetS0_deg, targetS1_deg;
+    targetS0_deg = targetS1_deg = 0.0f;
 
     // Program control
     bool instructionComplete = true;
-    size_t ProgramIdex = 0;
+    size_t programIdex = 0;
     bool pumpThisMode = false;
 
     // Guidance objects
@@ -135,10 +135,10 @@ void MotorControlTask(void *Parameters)
         if (instructionComplete)
         {
             // Process Instructions
-            if (CNCEnabled && ProgramIdex >= TestProgram.size())
+            if (CNCEnabled && programIdex >= TestProgram.size())
             {
-                ESP_LOGE(TAG, "End of program reached. ProgramIdex: %d, ProgramSize: %d",
-                         ProgramIdex, TestProgram.size());
+                ESP_LOGE(TAG, "End of program reached. programIdex: %d, ProgramSize: %d",
+                         programIdex, TestProgram.size());
                 StopCNC();
                 vTaskDelay(portMAX_DELAY); // Stop the task
                 continue;
@@ -146,9 +146,9 @@ void MotorControlTask(void *Parameters)
 
             // Read the next OpCode
             ParsedMessag_t message;
-            if (!ParseMessage(TestProgram.data(), ProgramIdex, TestProgram.size(), message))
+            if (!ParseMessage(TestProgram.data(), programIdex, TestProgram.size(), message))
             {
-                ESP_LOGE(TAG, "Failed to parse instruction at index %d", ProgramIdex);
+                ESP_LOGE(TAG, "Failed to parse instruction at index %d", programIdex);
                 StopCNC();
                 vTaskDelay(portMAX_DELAY); // Stop the task
                 continue;                  // Skip to the next iteration
@@ -192,11 +192,11 @@ void MotorControlTask(void *Parameters)
         instructionComplete =
             currentGuidance->GetTargetPosition(MOTOR_CONTROL_PERIOD_MS, Pos_m, Target_m);
 
-        MathErrorCodes CarToAngRet = CartToAng(target_S0_deg, target_S1_deg, Target_m);
+        MathErrorCodes cartToAngRet = CartToAng(targetS0_deg, targetS1_deg, Target_m);
 
-        if (CarToAngRet != E_OK)
+        if (cartToAngRet != E_OK)
         {
-            const char *reason = (CarToAngRet == E_UNREACHABLE_TOO_CLOSE) ? "close" : "far";
+            const char *reason = (cartToAngRet == E_UNREACHABLE_TOO_CLOSE) ? "close" : "far";
             ESP_LOGE(TAG, "Unreachable target position %.2f X %.2f Y is too %s. Stopping",
                      Target_m.x, Target_m.y, reason);
             StopCNC();
@@ -205,8 +205,8 @@ void MotorControlTask(void *Parameters)
         }
 
         // Control motor speed using a simple proportional law
-        S0Motor.setTargetSpeed((target_S0_deg - LocalS0Tlm.Position_deg) * kp_hz);
-        S1Motor.setTargetSpeed((target_S1_deg - LocalS1Tlm.Position_deg) * kp_hz);
+        S0Motor.setTargetSpeed((targetS0_deg - LocalS0Tlm.Position_deg) * kp_hz);
+        S1Motor.setTargetSpeed((targetS1_deg - LocalS1Tlm.Position_deg) * kp_hz);
 
         // Control pump speed
         if ((Target_m - Pos_m).magnitude() < posTol_m && pumpThisMode)
@@ -241,21 +241,21 @@ void MotorControlTask(void *Parameters)
         }
 
         // TODO improve thread safety before I lose a foot
-        memcpy(&telemetry_data.PumpMotorTlm, &LocalPumpTlm, sizeof LocalPumpTlm);
-        memcpy(&telemetry_data.S0MotorTlm, &LocalS0Tlm, sizeof LocalS0Tlm);
-        memcpy(&telemetry_data.S1MotorTlm, &LocalS1Tlm, sizeof LocalS1Tlm);
+        memcpy(&TelemetryData.PumpMotorTlm, &LocalPumpTlm, sizeof LocalPumpTlm);
+        memcpy(&TelemetryData.S0MotorTlm, &LocalS0Tlm, sizeof LocalS0Tlm);
+        memcpy(&TelemetryData.S1MotorTlm, &LocalS1Tlm, sizeof LocalS1Tlm);
 
-        telemetry_data.tipPos_X_m = Pos_m.x;
-        telemetry_data.tipPos_Y_m = Pos_m.y;
+        TelemetryData.tipPos_X_m = Pos_m.x;
+        TelemetryData.tipPos_Y_m = Pos_m.y;
 
-        telemetry_data.targetPos_X_m = Target_m.x;
-        telemetry_data.targetPos_Y_m = Target_m.y;
+        TelemetryData.targetPos_X_m = Target_m.x;
+        TelemetryData.targetPos_Y_m = Target_m.y;
 
-        telemetry_data.targetPos_S0_deg = target_S0_deg;
-        telemetry_data.targetPos_S1_deg = target_S1_deg;
+        TelemetryData.targetPos_S0_deg = targetS0_deg;
+        TelemetryData.targetPos_S1_deg = targetS1_deg;
 
         // Read the limit switch switch and adjust inhibits
-        if (telemetry_data.S0LimitSwitch)
+        if (TelemetryData.S0LimitSwitch)
         {
             S0Motor.SetDirectionalInhibit(StepperMotor::E_INHIBIT_BACKWARD);
         }
@@ -264,7 +264,7 @@ void MotorControlTask(void *Parameters)
             S0Motor.SetDirectionalInhibit(StepperMotor::E_NO_INHIBIT);
         }
 
-        if (telemetry_data.S1LimitSwitch)
+        if (TelemetryData.S1LimitSwitch)
         {
             S1Motor.SetDirectionalInhibit(StepperMotor::E_INHIBIT_FORWARD);
         }
@@ -279,7 +279,7 @@ void MotorControlTask(void *Parameters)
 
 void HandleCommandQueue(void)
 {
-    if (xQueueReceive(cnc_command_queue, &command, 0) == pdPASS)
+    if (xQueueReceive(CNCCommandQueue, &command, 0) == pdPASS)
     {
         switch (command.cmd_type)
         {

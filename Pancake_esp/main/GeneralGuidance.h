@@ -2,7 +2,6 @@
 #define GENERAL_GUIDANCE_H
 
 #include "esp_types.h"
-#include <math.h>
 #include "Vector2D.h"
 #include "SerialParser.h"
 
@@ -57,7 +56,7 @@ class WaitGuidance : public GeneralGuidance
 
     bool ConfigureFromMessage(ParsedMessag_t &Message) override
     {
-        if (Message.OpCode != GetOpCode() || Message.payload_length != sizeof(Config))
+        if (Message.OpCode != GetOpCode() || Message.payloadLength != sizeof(Config))
         {
             return false;
         }

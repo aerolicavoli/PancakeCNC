@@ -15,6 +15,7 @@ extern "C"
     void app_main(void)
     {
         esp_log_level_set("wifi", ESP_LOG_WARN);
+
         // Initialize the tasks
         PiUIInit();
         SafetyInit();
@@ -22,10 +23,10 @@ extern "C"
         MotorControlInit();
 
         // Start the tasks
-        SafetyStart();
+        SafetyStart(); // Safety first
         PiUIStart();
         // UIStart();
         TlmPublisherInitAndStart();
-        MotorControlStart();
+        MotorControlStart(); // Energize the CNC last
     }
 }

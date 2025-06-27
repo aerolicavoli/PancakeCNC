@@ -8,9 +8,7 @@
 #include "esp_clk_tree.h"
 #include "esp_log.h"
 #include "esp_system.h"
-#include "esp_types.h"
 #include "freertos/FreeRTOS.h"
-
 #include "PiUI.h"
 #include "esp_log.h"
 #include "esp_system.h"

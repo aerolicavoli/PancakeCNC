@@ -1,16 +1,20 @@
 
 #include "Safety.h"
 
-bool hardStopOnLimitSwitch = true;
+bool HardStopOnLimitSwitch = true;
+temperature_sensor_handle_t ESPTempSensorHandle = NULL;
 
 void SafetyInit()
 {
+    // Init the status LED
     gpio_reset_pin(ALIVE_LED);
     gpio_set_direction(ALIVE_LED, GPIO_MODE_OUTPUT);
 
+    // Init the motor enables
     gpio_reset_pin(S0S1_MOTOR_ENABLE);
     gpio_set_direction(S0S1_MOTOR_ENABLE, GPIO_MODE_OUTPUT);
 
+    // Init the limit switches
     gpio_reset_pin(PUMP_MOTOR_ENABLE);
     gpio_set_direction(PUMP_MOTOR_ENABLE, GPIO_MODE_OUTPUT);
 
@@ -24,6 +28,11 @@ void SafetyInit()
         .intr_type = GPIO_INTR_DISABLE                               // Disable interrupts
     };
     gpio_config(&io_conf);
+
+    // Initialize the temperature sensor
+    temperature_sensor_config_t tempSensorConfig = TEMPERATURE_SENSOR_CONFIG_DEFAULT(20, 50);
+    ESP_ERROR_CHECK(temperature_sensor_install(&tempSensorConfig, &ESPTempSensorHandle));
+    ESP_ERROR_CHECK(temperature_sensor_enable(ESPTempSensorHandle));
 }
 
 void SafetyStart() { xTaskCreate(SafetyTask, "Safety", configMINIMAL_STACK_SIZE, NULL, 1, NULL); }
@@ -44,7 +53,7 @@ void SafetyTask(void *Parameters)
         s1Lim = false; // gpio_get_level(S1_LIMIT_SWITCH);
 
         // Make shutdown decisions
-        if (hardStopOnLimitSwitch && (s0Lim || s1Lim))
+        if (HardStopOnLimitSwitch && (s0Lim || s1Lim))
         {
             DisableMotors();
         }
@@ -66,8 +75,11 @@ void SafetyTask(void *Parameters)
 
         frameNum++;
 
-        telemetry_data.S0LimitSwitch = s0Lim;
-        telemetry_data.S1LimitSwitch = s1Lim;
+        TelemetryData.S0LimitSwitch = s0Lim;
+        TelemetryData.S1LimitSwitch = s1Lim;
+
+        ESP_ERROR_CHECK(
+            temperature_sensor_get_celsius(ESPTempSensorHandle, &TelemetryData.espTemp_C));
 
         // Delay 10ms
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -89,5 +101,5 @@ void DisableMotors()
 void SetLimitSwitchPolicy(bool HardStopOnLimit)
 {
     // Set with single CPU operation
-    hardStopOnLimitSwitch = HardStopOnLimit;
+    HardStopOnLimitSwitch = HardStopOnLimit;
 }
