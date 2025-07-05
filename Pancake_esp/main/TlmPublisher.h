@@ -1,18 +1,19 @@
 #ifndef TLMPUBLISHER_H
 #define TLMPUBLISHER_H
 
-#include "Secret.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/event_groups.h"
+#include "esp_event.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
-#include "esp_wifi.h"
-#include "esp_event.h"
-#include "PiUI.h"
 #include "esp_timer.h"
-#include "sys/time.h"
+#include "esp_wifi.h"
+#include "freertos/event_groups.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "lwip/apps/sntp.h"
+#include "sys/time.h"
+
+#include "PiUI.h"
+#include "Secret.h"
 
 // Telemetry buffer settings
 #define BUFFER_SIZE 8000

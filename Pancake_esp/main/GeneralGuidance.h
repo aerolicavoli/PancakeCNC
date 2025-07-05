@@ -2,6 +2,7 @@
 #define GENERAL_GUIDANCE_H
 
 #include "esp_types.h"
+
 #include "Vector2D.h"
 #include "SerialParser.h"
 #include "PanMath.h"
