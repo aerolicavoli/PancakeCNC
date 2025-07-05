@@ -1,17 +1,15 @@
 #ifndef STEPPERMOTOR_H
 #define STEPPERMOTOR_H
 
-#include "defines.h"
-#include "driver/gpio.h"
 #include "driver/gptimer.h"
 #include "esp_attr.h"
 #include "esp_clk_tree.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
+
+#include "defines.h"
 #include "PiUI.h"
-#include "esp_log.h"
-#include "esp_system.h"
 
 class StepperMotor
 {

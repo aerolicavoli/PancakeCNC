@@ -1,15 +1,15 @@
 #ifndef SAFETY_H
 #define SAFETY_H
 
-#include "defines.h"
-#include "driver/gpio.h"
-#include "freertos/FreeRTOS.h"
-#include "esp_types.h"
+#include "driver/temperature_sensor.h"
 #include "esp_attr.h"
 #include "esp_log.h"
+#include "esp_types.h"
+#include "freertos/FreeRTOS.h"
+
+#include "defines.h"
 #include "GPIOAssignments.h"
 #include "PiUI.h"
-#include "driver/temperature_sensor.h"
 
 void SafetyInit();
 void SafetyStart();

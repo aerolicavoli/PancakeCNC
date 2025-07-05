@@ -1,9 +1,4 @@
 #include "MotorControl.h"
-#include "GPIOAssignments.h"
-#include "ArchimedeanSpiral.h"
-#include "PanMath.h"
-#include <cmath> // For std::isnan, std::isinf
-#include <array>
 
 const char *TAG = "CNCControl";
 
@@ -255,14 +250,7 @@ void MotorControlTask(void *Parameters)
         }
         else
         {
-            S0Motor.setTargetSpeed(0.0);
-            S1Motor.setTargetSpeed(0.0);
-            PumpMotor.setTargetSpeed(0.0);
-
-            // Process speed updates and force the speed change
-            S0Motor.UpdateSpeed(true);
-            S1Motor.UpdateSpeed(true);
-            PumpMotor.UpdateSpeed(true);
+            StopCNC();
         }
 
         // TODO improve thread safety before I lose a foot

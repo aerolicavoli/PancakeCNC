@@ -2,8 +2,10 @@
 #define PANMATH_H
 
 #include <cmath>
-#include "Vector2D.h"
+
 #include "esp_err.h"
+
+#include "Vector2D.h"
 
 #define C_DEGToRAD 0.017453292519943f
 #define C_RADToDEG 57.295779513082323f
