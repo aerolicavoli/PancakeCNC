@@ -7,6 +7,8 @@
 
 #define C_DEGToRAD 0.017453292519943f
 #define C_RADToDEG 57.295779513082323f
+#define C_HZToRADPS 6.283185307179586f
+#define C_MSToS 0.001f
 #define EPSILON 1.0e-10
 
 enum MathErrorCodes

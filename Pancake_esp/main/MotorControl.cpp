@@ -40,6 +40,11 @@ void WriteTestProgram(GeneralGuidance *GuidancePtr, std::vector<std::uint8_t> &s
 void MotorControlInit()
 {
     // TODO future work to build the test program externally and then transmit to device
+    SineGuidance sineTemp;
+    sineTemp.Config.amplitude_degps = 10.0f;
+    sineTemp.Config.frequency_hz = 0.25f;
+    WriteTestProgram(&sineTemp, TestProgram);
+
     ArchimedeanSpiral spiralTemp;
     spiralTemp.Config.spiral_constant = 0.002f;
     spiralTemp.Config.spiral_rate = 0.02f;
@@ -107,15 +112,21 @@ void MotorControlTask(void *Parameters)
     // Working variables
     float targetS0_deg, targetS1_deg;
     targetS0_deg = targetS1_deg = 0.0f;
+    float S0CmdSpeed_degps = 0.0f;
+    float S1CmdSpeed_degps = 0.0f;
+    float pumpSpeed_degps = 0.0f;
 
     // Program control
     bool instructionComplete = true;
     size_t programIdex = 0;
     bool pumpThisMode = false;
+    bool cmdViaAngle = false;
 
     // Guidance objects
     ArchimedeanSpiral spiralGuidance;
     WaitGuidance waitGuidance;
+    SineGuidance sineGuidance;
+
     GeneralGuidance *currentGuidance = nullptr;
 
     // RBF
@@ -174,6 +185,12 @@ void MotorControlTask(void *Parameters)
                     pumpThisMode = false;
                     break;
                 }
+                case CNC_SINE_OPCODE:
+                {
+                    currentGuidance = &sineGuidance;
+                    pumpThisMode = false;
+                    break;
+                }
                 default:
                 {
                     ESP_LOGE(TAG, "Unknown OpCode: 0x%02X", message.OpCode);
@@ -190,39 +207,47 @@ void MotorControlTask(void *Parameters)
         }
 
         instructionComplete =
-            currentGuidance->GetTargetPosition(MOTOR_CONTROL_PERIOD_MS, Pos_m, Target_m);
+            currentGuidance->GetTargetPosition(MOTOR_CONTROL_PERIOD_MS, Pos_m, Target_m,
+                                               cmdViaAngle, S0CmdSpeed_degps, S1CmdSpeed_degps);
 
-        MathErrorCodes cartToAngRet = CartToAng(targetS0_deg, targetS1_deg, Target_m);
-
-        if (cartToAngRet != E_OK)
+        if (cmdViaAngle)
         {
-            const char *reason = (cartToAngRet == E_UNREACHABLE_TOO_CLOSE) ? "close" : "far";
-            ESP_LOGE(TAG, "Unreachable target position %.2f X %.2f Y is too %s. Stopping",
-                     Target_m.x, Target_m.y, reason);
-            StopCNC();
-            vTaskDelay(portMAX_DELAY);
-            continue;
-        }
-
-        // Control motor speed using a simple proportional law
-        S0Motor.setTargetSpeed((targetS0_deg - LocalS0Tlm.Position_deg) * kp_hz);
-        S1Motor.setTargetSpeed((targetS1_deg - LocalS1Tlm.Position_deg) * kp_hz);
-
-        // Control pump speed
-        if ((Target_m - Pos_m).magnitude() < posTol_m && pumpThisMode)
-        {
-            // Set the pump speed proportional to the velocity
-            PumpMotor.setTargetSpeed(Vel_mps.magnitude() * pumpConstant_degpm);
+            pumpSpeed_degps = 0.0;
+            targetS0_deg = 0.0;
+            targetS1_deg = 0.0;
         }
         else
         {
-            // If the position error is too large, stop the pump
-            PumpMotor.setTargetSpeed(0.0);
+            MathErrorCodes cartToAngRet = CartToAng(targetS0_deg, targetS1_deg, Target_m);
+
+            if (cartToAngRet != E_OK)
+            {
+                const char *reason = (cartToAngRet == E_UNREACHABLE_TOO_CLOSE) ? "close" : "far";
+                ESP_LOGE(TAG, "Unreachable target position %.2f X %.2f Y is too %s. Stopping",
+                         Target_m.x, Target_m.y, reason);
+                StopCNC();
+                vTaskDelay(portMAX_DELAY);
+                continue;
+            }
+
+            // Control motor speed using a simple proportional law
+            S0CmdSpeed_degps = (targetS0_deg - LocalS0Tlm.Position_deg) * kp_hz;
+            S1CmdSpeed_degps = (targetS1_deg - LocalS1Tlm.Position_deg) * kp_hz;
+
+            // Control pump speed
+            pumpSpeed_degps = pumpThisMode && ((Target_m - Pos_m).magnitude() < posTol_m)
+                                  ? Vel_mps.magnitude() * pumpConstant_degpm
+                                  : 0.0;
         }
 
         // Command Speed
         if (CNCEnabled)
         {
+
+            PumpMotor.setTargetSpeed(pumpSpeed_degps);
+            S0Motor.setTargetSpeed(S0CmdSpeed_degps);
+            S1Motor.setTargetSpeed(S1CmdSpeed_degps);
+
             // Process speed updates and don't force the speed change
             S0Motor.UpdateSpeed(false);
             S1Motor.UpdateSpeed(false);

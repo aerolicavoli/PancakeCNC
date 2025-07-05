@@ -19,8 +19,8 @@ class ArchimedeanSpiral : public GeneralGuidance
   public:
     ~ArchimedeanSpiral() override = default;
 
-    bool GetTargetPosition(unsigned int DeltaTime_ms, Vector2D CurPos_m,
-                           Vector2D &CmdPos_m) override;
+    bool GetTargetPosition(unsigned int DeltaTime_ms, Vector2D CurPos_m, Vector2D &CmdPos_m,
+                           bool &CmdViaAngle, float &S0Speed_degps, float &S1Speed_degps) override;
 
     // Common to all guidance types
     uint8_t GetOpCode() const { return CNC_SPIRAL_OPCODE; }

@@ -2,8 +2,11 @@
 #include <math.h>
 
 bool ArchimedeanSpiral::GetTargetPosition(unsigned int DeltaTime_ms, Vector2D CurPos_m,
-                                          Vector2D &CmdPos_m)
+                                          Vector2D &CmdPos_m, bool &CmdViaAngle,
+                                          float &S0Speed_degps, float &S1Speed_degps)
 {
+    CmdViaAngle = false;
+
     float radius_m;
 
     radius_m = theta_rad * Config.spiral_constant;
