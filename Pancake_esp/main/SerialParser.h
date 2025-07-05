@@ -17,6 +17,7 @@
 #define CNC_SPIRAL_OPCODE 0x11
 #define CNC_JOG_OPCODE 0x12
 #define CNC_WAIT_OPCODE 0x13
+#define CNC_SINE_OPCODE 0x14
 
 typedef struct
 {
