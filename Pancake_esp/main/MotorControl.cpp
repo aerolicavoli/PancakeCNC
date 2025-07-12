@@ -40,6 +40,16 @@ void MotorControlInit()
     sineTemp.Config.frequency_hz = 0.25f;
     WriteTestProgram(&sineTemp, TestProgram);
 
+    // Zero the device
+    ConstantSpeed constantSpeed;
+    constantSpeed.Config.S0Speed_degps = 10.0f;
+    constantSpeed.Config.S1Speed_degps = 0.0f;
+    WriteTestProgram(&constantSpeed, TestProgram);
+
+    constantSpeed.Config.S0Speed_degps = 0.0f;
+    constantSpeed.Config.S1Speed_degps = 10.0f;
+    WriteTestProgram(&constantSpeed, TestProgram);
+
     ArchimedeanSpiral spiralTemp;
     spiralTemp.Config.spiral_constant = 0.002f;
     spiralTemp.Config.spiral_rate = 0.02f;
@@ -121,6 +131,7 @@ void MotorControlTask(void *Parameters)
     ArchimedeanSpiral spiralGuidance;
     WaitGuidance waitGuidance;
     SineGuidance sineGuidance;
+    ConstantSpeed constantSpeed;
 
     GeneralGuidance *currentGuidance = nullptr;
 
@@ -183,6 +194,12 @@ void MotorControlTask(void *Parameters)
                 case CNC_SINE_OPCODE:
                 {
                     currentGuidance = &sineGuidance;
+                    pumpThisMode = false;
+                    break;
+                }
+                case CNC_CONSTANT_SPEED_OPCODE:
+                {
+                    currentGuidance = &constantSpeed;
                     pumpThisMode = false;
                     break;
                 }
@@ -267,10 +284,14 @@ void MotorControlTask(void *Parameters)
         TelemetryData.targetPos_S0_deg = targetS0_deg;
         TelemetryData.targetPos_S1_deg = targetS1_deg;
 
-        // Read the limit switch switch and adjust inhibits
+        // Read the limit switch switch, adjust inhibits, and zero the device
         if (TelemetryData.S0LimitSwitch)
         {
             S0Motor.SetDirectionalInhibit(StepperMotor::E_INHIBIT_BACKWARD);
+            S0Motor.Zero();
+            
+            // Force the next instruction
+            instructionComplete = true;
         }
         else
         {
@@ -280,6 +301,10 @@ void MotorControlTask(void *Parameters)
         if (TelemetryData.S1LimitSwitch)
         {
             S1Motor.SetDirectionalInhibit(StepperMotor::E_INHIBIT_FORWARD);
+            S1Motor.Zero();
+
+            // Force the next instruction
+            instructionComplete = true;
         }
         else
         {

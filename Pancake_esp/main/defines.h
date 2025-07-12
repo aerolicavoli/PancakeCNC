@@ -4,6 +4,12 @@
 #include "esp_log.h"
 #include "esp_system.h"
 
+// Task timing
+#define MOTOR_CONTROL_PERIOD_MS 10
+#define SAFETY_PERIOD_MS 10
+#define BUFFER_ADD_PERIOD_MS 600
+
+
 #define CUSTOM_ERROR_CHECK(err)                                                                    \
     do                                                                                             \
     {                                                                                              \

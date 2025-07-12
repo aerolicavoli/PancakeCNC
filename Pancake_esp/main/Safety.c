@@ -46,6 +46,7 @@ void SafetyTask(void *Parameters)
     bool s0Lim = false;
     bool s1Lim = false;
 
+    const int safetyUpdatePeriod_Ticks = pdMS_TO_TICKS(SAFETY_PERIOD_MS);
     for (;;)
     {
         // Read limit switch settings
@@ -83,7 +84,7 @@ void SafetyTask(void *Parameters)
             temperature_sensor_get_celsius(ESPTempSensorHandle, &TelemetryData.espTemp_C));
 
         // Delay 10ms
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(safetyUpdatePeriod_Ticks);
     }
 }
 

@@ -7,7 +7,7 @@
 StepperMotor::StepperMotor(gpio_num_t stepPin, gpio_num_t dirPin, float AccelLimit_degps2,
                            float SpeedLimit_degps, float StepSize_deg, const char *name)
     : name(name), m_stepPin(stepPin), m_dirPin(dirPin), m_AccelLimit_degps2(AccelLimit_degps2),
-      m_SpeedLimit_degps(SpeedLimit_degps), m_StepSize_deg(StepSize_deg), timerRunning(false)
+      m_SpeedLimit_degps(SpeedLimit_degps), m_StepSize_deg(StepSize_deg), m_TimerRunning(false)
 {
     // Initialize variables
     m_stepCount = 0;
@@ -17,7 +17,8 @@ StepperMotor::StepperMotor(gpio_num_t stepPin, gpio_num_t dirPin, float AccelLim
     m_TargetSpeed_degps = 0;
     m_SpeedIncrement_hz = 0.0;
     m_DirectionalInhibit = E_NO_INHIBIT;
-    mux = portMUX_INITIALIZER_UNLOCKED;
+    m_CriticalMemoryMux = portMUX_INITIALIZER_UNLOCKED;
+    m_AngleOffset_deg = 0.0;
 
     // Configure GPIO pins
     gpio_config_t io_conf = {};
@@ -52,11 +53,11 @@ void StepperMotor::InitializeTimers(uint32_t MotorControlPeriod_ms)
              timer_config.resolution_hz, maxSpeed_degps);
 
     // Create and configure step timer
-    CUSTOM_ERROR_CHECK(gptimer_new_timer(&timer_config, &step_timer));
+    CUSTOM_ERROR_CHECK(gptimer_new_timer(&timer_config, &m_PulseTimer));
     gptimer_event_callbacks_t step_cbs = {};
     step_cbs.on_alarm = onStepTimerCallback;
-    CUSTOM_ERROR_CHECK(gptimer_register_event_callbacks(step_timer, &step_cbs, this));
-    CUSTOM_ERROR_CHECK(gptimer_enable(step_timer));
+    CUSTOM_ERROR_CHECK(gptimer_register_event_callbacks(m_PulseTimer, &step_cbs, this));
+    CUSTOM_ERROR_CHECK(gptimer_enable(m_PulseTimer));
     // Set speed SpeedIncrement_hz based on acceleration
 
     m_SpeedIncrement_hz = (m_AccelLimit_degps2 / m_StepSize_deg * MotorControlPeriod_ms / 1000.0);
@@ -71,9 +72,9 @@ void StepperMotor::InitializeTimers(uint32_t MotorControlPeriod_ms)
 // Set motor direction
 void StepperMotor::setDirection(bool dir)
 {
-    portENTER_CRITICAL(&mux);
+    portENTER_CRITICAL(&m_CriticalMemoryMux);
     m_direction = dir ? 1 : -1;
-    portEXIT_CRITICAL(&mux);
+    portEXIT_CRITICAL(&m_CriticalMemoryMux);
     gpio_set_level(m_dirPin, dir);
 }
 
@@ -95,12 +96,12 @@ void StepperMotor::setTargetSpeed(float Speed_degps)
 }
 
 // Log motor status
-void StepperMotor::logStatus()
+void StepperMotor::logStatus(void)
 {
     float speed = m_CurrentSpeed_degps;
-    portENTER_CRITICAL(&mux);
+    portENTER_CRITICAL(&m_CriticalMemoryMux);
     int32_t steps = m_stepCount;
-    portEXIT_CRITICAL(&mux);
+    portEXIT_CRITICAL(&m_CriticalMemoryMux);
     ESP_LOGI(name, "Step Count: %ld | Speed: %.2f deg/s | Target Speed: %.2f deg/s",
              (long int)steps, speed, m_TargetSpeed_degps);
 }
@@ -125,13 +126,20 @@ bool IRAM_ATTR StepperMotor::onStepTimerCallback(gptimer_handle_t timer,
     return false;
 }
 
+void StepperMotor::Zero(void)
+{
+    motor_tlm_t tempTlm;
+    GetTlm(&tempTlm);
+    m_AngleOffset_deg -= tempTlm.Position_deg;
+}
+
 void StepperMotor::GetTlm(motor_tlm_t *Tlm)
 {
-    portENTER_CRITICAL(&mux);
+    portENTER_CRITICAL(&m_CriticalMemoryMux);
     int32_t steps = m_stepCount;
-    portEXIT_CRITICAL(&mux);
+    portEXIT_CRITICAL(&m_CriticalMemoryMux);
 
-    Tlm->Position_deg = steps * m_StepSize_deg;
+    Tlm->Position_deg = steps * m_StepSize_deg + m_AngleOffset_deg;
     Tlm->Speed_degps = m_CurrentSpeed_degps;
 }
 
@@ -185,22 +193,18 @@ void StepperMotor::UpdateSpeed(bool ForceUpdate)
         gptimer_alarm_config_t alarm_config = {};
         alarm_config.alarm_count = alarm_count;
         alarm_config.flags.auto_reload_on_alarm = true;
-        esp_err_t err = gptimer_set_alarm_action(step_timer, &alarm_config);
-        if (err != ESP_OK)
-        {
-            // Handle error if necessary
-        }
+        CUSTOM_ERROR_CHECK(gptimer_set_alarm_action(m_PulseTimer, &alarm_config));
 
-        if (!timerRunning)
+        if (!m_TimerRunning)
         {
-            CUSTOM_ERROR_CHECK(gptimer_start(step_timer));
-            timerRunning = true;
+            CUSTOM_ERROR_CHECK(gptimer_start(m_PulseTimer));
+            m_TimerRunning = true;
         }
     }
-    else if (timerRunning)
+    else if (m_TimerRunning)
     {
-        CUSTOM_ERROR_CHECK(gptimer_stop(step_timer));
-        timerRunning = false;
+        CUSTOM_ERROR_CHECK(gptimer_stop(m_PulseTimer));
+        m_TimerRunning = false;
     }
 
     setDirection(m_CurrentSpeed_degps >= 0);

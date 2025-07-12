@@ -18,7 +18,6 @@
 // Telemetry buffer settings
 #define BUFFER_SIZE 8000
 #define WARN_BUFFER_SIZE 7000
-#define BUFFER_ADD_PERIOD_MS 600
 #define TRANSMITPERIOD_CYCLES 7
 #define WIFI_CONNECT_TIMEOUT_MS 30000
 #define MAX_RETRY_COUNT 5

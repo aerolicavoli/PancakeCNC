@@ -20,8 +20,6 @@
 #include "StepperMotor.h"
 #include "Vector2D.h"
 
-#define MOTOR_CONTROL_PERIOD_MS 10
-
 extern QueueHandle_t CNCCommandQueue;
 
 extern telemetry_data_t TelemetryData;
@@ -32,5 +30,8 @@ void MotorControlInit();
 void MotorControlStart();
 void MotorControlTask(void *Parameters);
 void HandleCommandQueue(void);
+
+void AutoHomeTask(void *Parameters);
+void AutoHomeStart(void);
 
 #endif

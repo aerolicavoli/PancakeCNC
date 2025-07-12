@@ -29,9 +29,10 @@ class StepperMotor
     void setDirection(bool dir);
     void setTargetSpeed(float Speed_degps);
     void InitializeTimers(uint32_t MotorControlPeriod_ms);
-    void logStatus();
+    void logStatus(void);
     void SetDirectionalInhibit(direction_inhibit_type_t Inhibit);
-
+    void Zero(void);
+    
     // ISR callback for the step timer
     static bool IRAM_ATTR onStepTimerCallback(gptimer_handle_t timer,
                                               const gptimer_alarm_event_data_t *edata,
@@ -65,15 +66,16 @@ class StepperMotor
     float m_AccelLimit_degps2;
     float m_SpeedLimit_degps;
     float m_StepSize_deg;
+    float m_AngleOffset_deg;
 
     // GPTimer handle for the step timer
-    gptimer_handle_t step_timer;
+    gptimer_handle_t m_PulseTimer;
 
     // Mutex for critical sections
-    portMUX_TYPE mux;
+    portMUX_TYPE m_CriticalMemoryMux;
 
-    // Timer running state
-    bool timerRunning;
+    bool m_TimerRunning;
+
 };
 
 #endif // STEPPERMOTOR_H

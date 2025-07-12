@@ -139,4 +139,46 @@ class SineGuidance : public GeneralGuidance
     float theta_rad = 0.0f;
 };
 
+class ConstantSpeed : public GeneralGuidance
+{
+  public:
+    ConstantSpeed(void) : Config{} {}
+    struct ConstantSpeedConfig
+    {
+        float S0Speed_degps;
+        float S1Speed_degps;
+    };
+
+    ConstantSpeedConfig Config;
+
+    // Common to all guidance types
+    uint8_t GetOpCode() const { return CNC_CONSTANT_SPEED_OPCODE; }
+    const void *GetConfig() const override { return &Config; }
+    size_t GetConfigLength() const override { return sizeof(Config); }
+
+    bool ConfigureFromMessage(ParsedMessag_t &Message) override
+    {
+        if (Message.OpCode != GetOpCode() || Message.payloadLength != sizeof(Config))
+        {
+            return false;
+        }
+        memcpy(&Config, Message.payload, sizeof(Config));
+
+        return true;
+    }
+
+    bool GetTargetPosition(unsigned int DeltaTime_ms, Vector2D CurPos_m, Vector2D &CmdPos_m,
+                           bool &CmdViaAngle, float &S0Speed_degps, float &S1Speed_degps) override
+    {
+        S0Speed_degps = Config.S0Speed_degps;
+        S1Speed_degps = Config.S1Speed_degps;
+
+        // Stay in this mode forever
+        // An external process will check limit switch states and exit the mode.
+        return false;
+    }
+
+  private:
+};
+
 #endif // GENERAL_GUIDANCE_H
