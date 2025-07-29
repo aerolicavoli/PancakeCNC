@@ -15,13 +15,15 @@ bool CNCEnabled = false;
 
 std::vector<uint8_t> TestProgram;
 
+const float motor_step_size_deg = 0.9 / 16.0; // TODO, track down 16 error term
+
 // Create motor instances
 // Step size = gear ratio * motor step size / micro step reduction
-static StepperMotor S0Motor(S0_MOTOR_PULSE, S0_MOTOR_DIR, 400.0, 5.0, 0.14814 * 0.9 / 4.0,
-                            "S0MOTOR");
-static StepperMotor S1Motor(S1_MOTOR_PULSE, S1_MOTOR_DIR, 400.0, 5.0, 0.4166 * 0.9 / 4.0,
-                            "S1MOTOR");
-static StepperMotor PumpMotor(PUMP_MOTOR_PULSE, PUMP_MOTOR_DIR, 200.0, 200, 0.9 / 4.0, "PUMPMOTOR");
+static StepperMotor S0Motor(S0_MOTOR_PULSE, S0_MOTOR_DIR, 800.0, 50.0, motor_step_size_deg * 16.0 / 108.0,
+                            "S0MOTOR",false);
+static StepperMotor S1Motor(S1_MOTOR_PULSE, S1_MOTOR_DIR, 800.0, 50.0, motor_step_size_deg * 10.0 / 24.0,
+                            "S1MOTOR", true);
+static StepperMotor PumpMotor(PUMP_MOTOR_PULSE, PUMP_MOTOR_DIR, 200.0, 200, motor_step_size_deg, "PUMPMOTOR", true);
 
 void WriteTestProgram(GeneralGuidance *GuidancePtr, std::vector<std::uint8_t> &stream)
 {
@@ -35,38 +37,43 @@ void WriteTestProgram(GeneralGuidance *GuidancePtr, std::vector<std::uint8_t> &s
 void MotorControlInit()
 {
     // TODO future work to build the test program externally and then transmit to device
+    /*
     SineGuidance sineTemp;
-    sineTemp.Config.amplitude_degps = 10.0f;
-    sineTemp.Config.frequency_hz = 0.25f;
+    sineTemp.Config.Frequency_hz = 0.05f;
+    sineTemp.Config.Amplitude_deg = 45.0f;
+
     WriteTestProgram(&sineTemp, TestProgram);
+    
 
     // Zero the device
+    
     ConstantSpeed constantSpeed;
-    constantSpeed.Config.S0Speed_degps = 10.0f;
-    constantSpeed.Config.S1Speed_degps = 0.0f;
+    constantSpeed.Config.S0Speed_degps = 0.0f;
+    constantSpeed.Config.S1Speed_degps = 45.0f;
     WriteTestProgram(&constantSpeed, TestProgram);
-
+    
     constantSpeed.Config.S0Speed_degps = 0.0f;
     constantSpeed.Config.S1Speed_degps = 10.0f;
     WriteTestProgram(&constantSpeed, TestProgram);
 
+    */
     ArchimedeanSpiral spiralTemp;
-    spiralTemp.Config.spiral_constant = 0.002f;
-    spiralTemp.Config.spiral_rate = 0.02f;
-    spiralTemp.Config.center_x = 0.1f;
-    spiralTemp.Config.center_y = 0.15f;
-    spiralTemp.Config.max_radius = 0.025f;
+    spiralTemp.Config.SpiralConstant_mprad = 0.001f;
+    spiralTemp.Config.SpiralRate_radps = 4.0f;
+    spiralTemp.Config.CenterX_m = 0.1f;
+    spiralTemp.Config.CenterY_m = 0.15f;
+    spiralTemp.Config.MaxRadius_m = 0.13f;
     WriteTestProgram(&spiralTemp, TestProgram);
 
     WaitGuidance waitTemp;
     waitTemp.Config.timeout_ms = 5000; // 5 seconds
     WriteTestProgram(&waitTemp, TestProgram);
 
-    spiralTemp.Config.center_x = 0.0f;
+    spiralTemp.Config.CenterX_m = 0.0f;
     WriteTestProgram(&spiralTemp, TestProgram);
 
     WriteTestProgram(&waitTemp, TestProgram);
-
+    
     // Hardware initialization
 
     // Set pulse pins.  The safety component will handle the enable pins
@@ -110,9 +117,9 @@ void MotorControlTask(void *Parameters)
     const int motorUpdatePeriod_Ticks = pdMS_TO_TICKS(MOTOR_CONTROL_PERIOD_MS);
 
     // Control parms
-    const float kp_hz(5.0e-1);
-    const float pumpConstant_degpm(1.0e4);
-    const float posTol_m(3.0e-2);
+    const float kp_hz(1.0e+0);
+    const float pumpConstant_degpm(1.0e5);
+    const float posTol_m(1.0e-1);
 
     // Working variables
     float targetS0_deg, targetS1_deg;

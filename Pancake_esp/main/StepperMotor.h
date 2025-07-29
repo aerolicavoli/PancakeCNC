@@ -23,7 +23,7 @@ class StepperMotor
 
     // Constructor
     StepperMotor(gpio_num_t stepPin, gpio_num_t dirPin, float AccelLimit_degps2,
-                 float SpeedLimit_degps, float StepSize_deg, const char *name);
+                 float SpeedLimit_degps, float StepSize_deg, const char *name, bool wiredBackward);
 
     // Public methods
     void setDirection(bool dir);
@@ -75,6 +75,7 @@ class StepperMotor
     portMUX_TYPE m_CriticalMemoryMux;
 
     bool m_TimerRunning;
+    bool m_WiredBackward;
 
 };
 

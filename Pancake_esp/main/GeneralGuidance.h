@@ -95,8 +95,8 @@ class SineGuidance : public GeneralGuidance
     SineGuidance(void) : Config{} {}
     struct SineConfig
     {
-        float amplitude_degps;
-        float frequency_hz;
+        float Amplitude_deg;
+        float Frequency_hz;
     };
 
     SineConfig Config;
@@ -125,10 +125,11 @@ class SineGuidance : public GeneralGuidance
         CmdViaAngle = true;
         CmdPos_m.x = 0.0;
         CmdPos_m.y = 0.0;
+        float freq_radps = Config.Frequency_hz * C_HZToRADPS;
 
-        theta_rad += DeltaTime_ms * C_MSToS * Config.frequency_hz * C_HZToRADPS;
+        theta_rad += DeltaTime_ms * C_MSToS * freq_radps;
 
-        S0Speed_degps = Config.amplitude_degps * sinf(theta_rad);
+        S0Speed_degps = Config.Amplitude_deg * freq_radps * sinf(theta_rad);
         S1Speed_degps = S0Speed_degps;
 
         // Stay in this test mode forever
@@ -170,6 +171,8 @@ class ConstantSpeed : public GeneralGuidance
     bool GetTargetPosition(unsigned int DeltaTime_ms, Vector2D CurPos_m, Vector2D &CmdPos_m,
                            bool &CmdViaAngle, float &S0Speed_degps, float &S1Speed_degps) override
     {
+        CmdViaAngle = true;
+
         S0Speed_degps = Config.S0Speed_degps;
         S1Speed_degps = Config.S1Speed_degps;
 

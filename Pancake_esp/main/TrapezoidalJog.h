@@ -20,7 +20,7 @@ class TrapezoidalJog : public GeneralGuidance
     {
     }
 
-    GuidanceMode GetTargetPosition(unsigned int DeltaTime_ms, Vector2D CurPos_m, Vector2D &CmdPos_m,
+    bool GetTargetPosition(unsigned int DeltaTime_ms, Vector2D CurPos_m, Vector2D &CmdPos_m,
                                    bool &CmdViaAngle, float &S0Speed_degps,
                                    float &S1Speed_degps) override;
 

@@ -5,9 +5,9 @@
 #define TIMER_PRECISION 1000000
 // Constructor implementation
 StepperMotor::StepperMotor(gpio_num_t stepPin, gpio_num_t dirPin, float AccelLimit_degps2,
-                           float SpeedLimit_degps, float StepSize_deg, const char *name)
+                           float SpeedLimit_degps, float StepSize_deg, const char *name, bool wiredBackward)
     : name(name), m_stepPin(stepPin), m_dirPin(dirPin), m_AccelLimit_degps2(AccelLimit_degps2),
-      m_SpeedLimit_degps(SpeedLimit_degps), m_StepSize_deg(StepSize_deg), m_TimerRunning(false)
+      m_SpeedLimit_degps(SpeedLimit_degps), m_StepSize_deg(StepSize_deg), m_TimerRunning(false), m_WiredBackward(wiredBackward)
 {
     // Initialize variables
     m_stepCount = 0;
@@ -74,8 +74,11 @@ void StepperMotor::setDirection(bool dir)
 {
     portENTER_CRITICAL(&m_CriticalMemoryMux);
     m_direction = dir ? 1 : -1;
+
     portEXIT_CRITICAL(&m_CriticalMemoryMux);
-    gpio_set_level(m_dirPin, dir);
+
+    // Could I re-wire this? Yes. Will I? No.
+    gpio_set_level(m_dirPin, m_WiredBackward ? !dir : dir);
 }
 
 // Set target speed

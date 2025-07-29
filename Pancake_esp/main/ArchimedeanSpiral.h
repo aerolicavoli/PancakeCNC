@@ -7,11 +7,12 @@
 
 struct SpiralConfig
 {
-    float spiral_constant;
-    float spiral_rate;
-    float center_x;
-    float center_y;
-    float max_radius;
+    float SpiralConstant_mprad;
+    float SpiralRate_radps = 1.0;
+    float LinearSpeed_mps = 0.05; 
+    float CenterX_m;
+    float CenterY_m;
+    float MaxRadius_m;
 };
 
 class ArchimedeanSpiral : public GeneralGuidance
@@ -45,8 +46,6 @@ class ArchimedeanSpiral : public GeneralGuidance
 
   private:
     float theta_rad = 0.0;
-    float m_MaxSpiralRate_radps = 0.1;
-    float m_Speed_mps = 0.005f;
 };
 
 #endif // ARCHIMEDEAN_SPIRAL_H
