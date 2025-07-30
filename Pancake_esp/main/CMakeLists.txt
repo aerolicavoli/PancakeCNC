@@ -8,5 +8,6 @@ idf_component_register(SRCS "StepperMotor.cpp"
  "PiUI.c"
  "UI.c"
  "PanMath.cpp"
- "TlmPublisher.c"
+ "WifiHandler.cpp"
+ "InfluxDBCmdAndTlm.cpp"
  INCLUDE_DIRS ".")

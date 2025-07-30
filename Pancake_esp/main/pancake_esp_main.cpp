@@ -3,30 +3,38 @@
 #include "StepperMotor.h"
 #include "defines.h"
 #include "MotorControl.h"
+#include "WifiHandler.h"
+#include "InfluxDBCmdAndTlm.h"
 
 extern "C"
 {
 
 #include "PiUI.h"
 #include "Safety.h"
-#include "TlmPublisher.h"
 #include "UI.h"
 
     void app_main(void)
     {
         esp_log_level_set("wifi", ESP_LOG_WARN);
 
+        // Safety first
+        SafetyInit();
+        SafetyStart(); 
+
         // Initialize the tasks
         PiUIInit();
-        SafetyInit();
         //  UIInit();
         MotorControlInit();
+        WifiInit();
+        CmdAndTlmInit();
 
         // Start the tasks
-        SafetyStart(); // Safety first
+        CmdAndTlmStart();
         PiUIStart();
         // UIStart();
-        TlmPublisherInitAndStart();
-        MotorControlStart(); // Energize the CNC last
+
+        // Energize the CNC last
+        MotorControlStart(); 
+    
     }
 }
