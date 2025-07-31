@@ -29,7 +29,7 @@ static int InfluxVprintf(const char *str, va_list args)
         size_t payloadLength = (len < sizeof(logBuffer)) ? len : sizeof(logBuffer) - 1;
 
         AddLogToBuffer(logBuffer);
-        SendProtocolMessage(MSG_TYPE_LOG, (uint8_t *)logBuffer, payloadLength);
+        (void)SendProtocolMessage(MSG_TYPE_LOG, (uint8_t *)logBuffer, payloadLength);
     }
     return len;
 }
