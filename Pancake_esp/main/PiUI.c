@@ -1,4 +1,5 @@
 #include "PiUI.h"
+#include <stdlib.h>
 
 telemetry_data_t TelemetryData;
 SemaphoreHandle_t telemetry_mutex;
@@ -15,7 +16,7 @@ static int UartVprintf(const char *Str, va_list Args)
     if (len > 0)
     {
         size_t payloadLength = (len < sizeof(logBuffer)) ? len : sizeof(logBuffer) - 1;
-        SendProtocolMessage(MSG_TYPE_LOG, (uint8_t *)logBuffer, payloadLength);
+        (void)SendProtocolMessage(MSG_TYPE_LOG, (uint8_t *)logBuffer, payloadLength);
     }
     return len;
 }
@@ -175,18 +176,39 @@ void RouteMessage(const parsed_message_t *Message)
 }
 
 // Update your telemetry provider function
-void SendProtocolMessage(uint8_t MessageType, const uint8_t *Payload, size_t PayloadLength)
+esp_err_t SendProtocolMessage(uint8_t MessageType, const uint8_t *Payload, size_t PayloadLength)
 {
-    uint8_t buffer[512];
+    uint8_t length = (PayloadLength > 255) ? 255 : PayloadLength;
+
+    // Worst case each payload byte is escaped into two bytes
+    size_t buffer_size = 5 + (length * 2);
+    uint8_t *buffer = (uint8_t *)malloc(buffer_size);
+    if (buffer == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to allocate message buffer");
+        return ESP_FAIL;
+    }
+
     size_t index = 0;
 
+#define CHECK_AND_WRITE(byte)                             \
+    do                                                   \
+    {                                                    \
+        if (index >= buffer_size)                        \
+        {                                                \
+            ESP_LOGE(TAG, "Message buffer overflow");    \
+            free(buffer);                                \
+            return ESP_FAIL;                             \
+        }                                                \
+        buffer[index++] = (byte);                        \
+    } while (0)
+
     // Start Delimiter
-    buffer[index++] = STX;
+    CHECK_AND_WRITE(STX);
     // Message Type
-    buffer[index++] = MessageType;
-    // Payload Length (limit to 255)
-    uint8_t length = (PayloadLength > 255) ? 255 : PayloadLength;
-    buffer[index++] = length;
+    CHECK_AND_WRITE(MessageType);
+    // Payload Length
+    CHECK_AND_WRITE(length);
 
     // Payload with escaping
     uint8_t checksum = 0;
@@ -196,22 +218,23 @@ void SendProtocolMessage(uint8_t MessageType, const uint8_t *Payload, size_t Pay
         checksum ^= byte;
         if (byte == STX || byte == ETX || byte == ESC)
         {
-            buffer[index++] = ESC;
-            buffer[index++] = byte ^ 0x20;
+            CHECK_AND_WRITE(ESC);
+            CHECK_AND_WRITE(byte ^ 0x20);
         }
         else
         {
-            buffer[index++] = byte;
+            CHECK_AND_WRITE(byte);
         }
     }
 
     // Checksum
-    buffer[index++] = checksum;
+    CHECK_AND_WRITE(checksum);
     // End Delimiter
-    buffer[index++] = ETX;
+    CHECK_AND_WRITE(ETX);
 
-    // Send the buffer
     uart_write_bytes(UART_NUM, (const char *)buffer, index);
+    free(buffer);
+    return ESP_OK;
 }
 
 void telemetry_provider_handle_request()
@@ -233,6 +256,6 @@ void telemetry_provider_handle_request()
     }
 
     // Send the telemetry data
-    SendProtocolMessage(MSG_TYPE_TELEMETRY, (uint8_t *)&current_telemetry,
+    (void)SendProtocolMessage(MSG_TYPE_TELEMETRY, (uint8_t *)&current_telemetry,
                         sizeof(telemetry_data_t));
 }
