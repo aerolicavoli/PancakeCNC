@@ -1,9 +1,6 @@
 #ifndef INFLUXDBCMDANDTLM_H
 #define INFLUXDBCMDANDTLM_H
 
-
-
-
 #include "esp_event.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
@@ -18,8 +15,8 @@
 #include "PiUI.h"
 
 // Telemetry buffer settings
-#define BUFFER_SIZE 8000
-#define WARN_BUFFER_SIZE 7000
+#define BUFFER_SIZE 2000
+#define WARN_BUFFER_SIZE 1500
 #define TRANSMITPERIOD_MS 900
 
 // Function declarations

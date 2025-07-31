@@ -28,7 +28,7 @@ void ObtainTime()
         localtime_r(&now, &timeInfo);
         if (timeInfo.tm_year >= (2016 - 1900))
         {
-            ESP_LOGD(TAG, "Time set successfully");
+            ESP_LOGI(TAG, "Time set successfully");
             return;
         }
     }
@@ -39,8 +39,12 @@ void ObtainTime()
 
 void WifiReconnectTask(void *pvParameters)
 {
+            UBaseType_t uxHighWaterMark = uxTaskGetStackHighWaterMark(nullptr);
+
+ESP_LOGI("WIFI", "Stack watermark (this task): %u bytes", uxHighWaterMark);
     for (;;)
     {
+        /*
         // If wifi has disconnected and a recconnect is not in progress
         if (WifiState == WIFI_STATE_DISCONNECTED)
         {
@@ -61,7 +65,7 @@ void WifiReconnectTask(void *pvParameters)
                 ESP_LOGE(TAG, "Failed to reconnect after %d attempts", MAX_RETRY_COUNT);
             }
         }
-
+        */
         // Small delay between checks
         vTaskDelay(pdMS_TO_TICKS(RECONNECT_PERIOD_MS));
     }
@@ -69,34 +73,53 @@ void WifiReconnectTask(void *pvParameters)
 
 void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data)
 {
+    //ESP_LOGI(TAG, "Handling Wi-Fi event, event code 0x%" PRIx32, event_id);
+    //vTaskDelay(pdMS_TO_TICKS(1000));
+
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START)
     {
-        ESP_LOGD("WIFI", "Wi-Fi STA started, connecting...");
-        WifiState = WIFI_STATE_CONNECTING;
+        /*
+        ESP_LOGI("WIFI", "Wi-Fi STA started, connecting...");
+
+             ESP_LOGI("WIFI", "Free heap: %lu bytes", esp_get_free_heap_size());
+ESP_LOGI("WIFI", "Free internal heap: %u bytes", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+ESP_LOGI("WIFI", "Free 8-bit heap: %u bytes", heap_caps_get_free_size(MALLOC_CAP_8BIT));
+
+wifi_mode_t mode;
+esp_wifi_get_mode(&mode);
+ESP_LOGI("WIFI", "WiFi mode: %d", mode);
+
+            vTaskDelay(pdMS_TO_TICKS(10000));
+*/
+        //WifiState = WIFI_STATE_CONNECTING;
         esp_wifi_connect();
+         //       ESP_LOGI("WIFI", "Wi-Fi STA started, part 2...");
+         //   vTaskDelay(pdMS_TO_TICKS(1000));
     }
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED)
     {
         ESP_LOGW("WIFI", "Wi-Fi disconnected");
-        WifiState = WIFI_STATE_DISCONNECTED;
+       //     vTaskDelay(pdMS_TO_TICKS(1000));
+
+       // WifiState = WIFI_STATE_DISCONNECTED;
         // The reconnect response is handled by the reconnect task
 
         // Block Wifi consumers until we are connected again
-        xSemaphoreTake(WifiAvailableSemaphore, portMAX_DELAY);
+        // xSemaphoreTake(WifiAvailableSemaphore, pdMS_TO_TICKS(1000));
     }
     else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP)
     {
-        ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
-        ESP_LOGD("WIFI", "Connected! Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
+      //  ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
+        ESP_LOGI("WIFI", "Connected! Got IP: "); // IPSTR, IP2STR(&event->ip_info.ip));
 
-        WifiState = WIFI_STATE_CONNECTED;
-        vTaskDelay(pdMS_TO_TICKS(3000));
+        //WifiState = WIFI_STATE_CONNECTED;
+       // vTaskDelay(pdMS_TO_TICKS(3000));
         
         // Sync the time
-        ObtainTime();
+   //     ObtainTime();
 
         // Unblock Wifi Consumers once connected and the time is set
-        xSemaphoreGive(WifiAvailableSemaphore);
+        //xSemaphoreGive(WifiAvailableSemaphore);
     }
 }
 
@@ -106,8 +129,6 @@ void WifiInit()
 
     WifiAvailableSemaphore = xSemaphoreCreateBinary();
 
-    // Block all Wifi consumers while initializing
-    xSemaphoreTake(WifiAvailableSemaphore, portMAX_DELAY);
 
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND)
@@ -116,30 +137,46 @@ void WifiInit()
         ESP_ERROR_CHECK(nvs_flash_init());
     }
 
+
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
+
+
     assert(sta_netif);
+
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
-                                                        &wifi_event_handler, NULL, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
-                                                        &wifi_event_handler, NULL, NULL));
 
-    wifi_config_t wifi_config = {};
+    wifi_config_t wifi_config;
+    memset(&wifi_config, 0, sizeof(wifi_config));  // zero out all fields
+
+
     strncpy((char *)wifi_config.sta.ssid, WIFI_SSID, sizeof(wifi_config.sta.ssid));
+
     strncpy((char *)wifi_config.sta.password, WIFI_PASSWORD, sizeof(wifi_config.sta.password));
+    
     wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
 
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+
+       ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
+                                                        &wifi_event_handler, NULL, NULL));
+
+
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
+                                                        &wifi_event_handler, NULL, NULL));
+
+
     ESP_ERROR_CHECK(esp_wifi_start());
+
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
 
-    ESP_LOGD(TAG, "Wi-Fi initialized. Connecting to %s...", WIFI_SSID);
+
+    ESP_LOGI(TAG, "Wi-Fi initialized. Connecting to %s...", WIFI_SSID);
 
     // Create reconnect task
-    ESP_ERROR_CHECK(xTaskCreate(WifiReconnectTask, "WiFiReconnect", 2500, NULL, 2,
-                    &WifiReconnectTaskHandle));
+    //ESP_ERROR_CHECK(xTaskCreate(WifiReconnectTask, "WiFiReconnect", configMINIMAL_STACK_SIZE, NULL, 2,
+    //                &WifiReconnectTaskHandle));
 }
