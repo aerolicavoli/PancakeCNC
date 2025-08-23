@@ -241,19 +241,10 @@ void telemetry_provider_handle_request()
 {
     telemetry_data_t current_telemetry;
 
-    // Acquire the mutex before accessing shared data
-    if (xSemaphoreTake(telemetry_mutex, pdMS_TO_TICKS(100)) == pdTRUE)
-    {
+
         // Copy the telemetry data
         current_telemetry = TelemetryData;
-        // Release the mutex
-        xSemaphoreGive(telemetry_mutex);
-    }
-    else
-    {
-        ESP_LOGW(TAG, "Failed to acquire telemetry mutex");
-        return;
-    }
+
 
     // Send the telemetry data
     (void)SendProtocolMessage(MSG_TYPE_TELEMETRY, (uint8_t *)&current_telemetry,

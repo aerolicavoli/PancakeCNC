@@ -39,12 +39,9 @@ void ObtainTime()
 
 void WifiReconnectTask(void *pvParameters)
 {
-            UBaseType_t uxHighWaterMark = uxTaskGetStackHighWaterMark(nullptr);
-
-ESP_LOGI("WIFI", "Stack watermark (this task): %u bytes", uxHighWaterMark);
     for (;;)
     {
-        /*
+     /*   
         // If wifi has disconnected and a recconnect is not in progress
         if (WifiState == WIFI_STATE_DISCONNECTED)
         {
@@ -78,19 +75,7 @@ void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id
 
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START)
     {
-        /*
-        ESP_LOGI("WIFI", "Wi-Fi STA started, connecting...");
 
-             ESP_LOGI("WIFI", "Free heap: %lu bytes", esp_get_free_heap_size());
-ESP_LOGI("WIFI", "Free internal heap: %u bytes", heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
-ESP_LOGI("WIFI", "Free 8-bit heap: %u bytes", heap_caps_get_free_size(MALLOC_CAP_8BIT));
-
-wifi_mode_t mode;
-esp_wifi_get_mode(&mode);
-ESP_LOGI("WIFI", "WiFi mode: %d", mode);
-
-            vTaskDelay(pdMS_TO_TICKS(10000));
-*/
         //WifiState = WIFI_STATE_CONNECTING;
         esp_wifi_connect();
          //       ESP_LOGI("WIFI", "Wi-Fi STA started, part 2...");
@@ -101,7 +86,7 @@ ESP_LOGI("WIFI", "WiFi mode: %d", mode);
         ESP_LOGW("WIFI", "Wi-Fi disconnected");
        //     vTaskDelay(pdMS_TO_TICKS(1000));
 
-       // WifiState = WIFI_STATE_DISCONNECTED;
+       //WifiState = WIFI_STATE_DISCONNECTED;
         // The reconnect response is handled by the reconnect task
 
         // Block Wifi consumers until we are connected again
@@ -113,10 +98,10 @@ ESP_LOGI("WIFI", "WiFi mode: %d", mode);
         ESP_LOGI("WIFI", "Connected! Got IP: "); // IPSTR, IP2STR(&event->ip_info.ip));
 
         //WifiState = WIFI_STATE_CONNECTED;
-       // vTaskDelay(pdMS_TO_TICKS(3000));
+        vTaskDelay(pdMS_TO_TICKS(3000));
         
         // Sync the time
-   //     ObtainTime();
+        ObtainTime();
 
         // Unblock Wifi Consumers once connected and the time is set
         //xSemaphoreGive(WifiAvailableSemaphore);
@@ -177,6 +162,6 @@ void WifiInit()
     ESP_LOGI(TAG, "Wi-Fi initialized. Connecting to %s...", WIFI_SSID);
 
     // Create reconnect task
-    //ESP_ERROR_CHECK(xTaskCreate(WifiReconnectTask, "WiFiReconnect", configMINIMAL_STACK_SIZE, NULL, 2,
-    //                &WifiReconnectTaskHandle));
+    ESP_ERROR_CHECK(xTaskCreate(WifiReconnectTask, "WiFiReconnect", 2500, NULL, 2,
+                    &WifiReconnectTaskHandle));
 }
