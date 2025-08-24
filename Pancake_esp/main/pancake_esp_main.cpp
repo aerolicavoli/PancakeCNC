@@ -4,7 +4,7 @@
 #include "defines.h"
 //#include "MotorControl.h"
 #include "WifiHandler.h"
-//#include "InfluxDBCmdAndTlm.h"
+#include "InfluxDBCmdAndTlm.h"
 
 extern "C"
 {
@@ -32,10 +32,10 @@ extern "C"
         //  UIInit();
         //MotorControlInit();
         WifiInit();
-        //CmdAndTlmInit();
+        CmdAndTlmInit();
 
         // Start the tasks
-        //CmdAndTlmStart();
+        CmdAndTlmStart();
        // PiUIStart();
         // UIStart();
 

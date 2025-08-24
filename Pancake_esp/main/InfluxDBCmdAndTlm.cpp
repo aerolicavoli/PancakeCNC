@@ -147,9 +147,12 @@ void TransmitTlmTask(void *Parameters)
 {
     for (;;)
     {
+        ESP_LOGW(TAG, "Transmit");
+
         // Copy the telemetry buffer to a transmit buffer, briefly pause aggregation
         if (WorkingTlmBufferIdx > 0)
         {
+            ESP_LOGW(TAG, "Transmit something");
             // Suspend logging over WiFi
             EnableLoggingOverUART();
 
@@ -182,7 +185,7 @@ void TransmitTlmTask(void *Parameters)
         }
 
         // Attempt to send the telemetry data
-        if (xSemaphoreTake(WifiAvailableSemaphore, pdMS_TO_TICKS(100)) == pdTRUE)
+        if (true) //xSemaphoreTake(WifiAvailableSemaphore, pdMS_TO_TICKS(100)) == pdTRUE)
         {
             SendDataToInflux(TransmitTlmBuffer, TransmitTlmBufferIdx);
         }
@@ -193,7 +196,7 @@ void TransmitTlmTask(void *Parameters)
         }
 
         // Restart logging over WiFi
-        esp_log_set_vprintf(InfluxVprintf);
+        //esp_log_set_vprintf(InfluxVprintf);
         
         vTaskDelay(pdMS_TO_TICKS(TRANSMITPERIOD_MS));
     }
@@ -214,6 +217,7 @@ void AggregateTlmTask(void *Parameters)
         // Acquire the mutex before updating shared data
         if (true)
         {
+            ESP_LOGW(TAG, "Agreggate");
             if (sendBufferOverflowWarning && WorkingTlmBufferIdx > WARN_BUFFER_SIZE)
             {
                 ESP_LOGW(TAG, "Buffer overflow warning: %d bytes used", WorkingTlmBufferIdx);
@@ -255,6 +259,7 @@ void AggregateTlmTask(void *Parameters)
 
 void SendDataToInflux(const char *Data, size_t Length)
 {
+    ESP_LOGW(TAG, "Attempting to send data");
 
     esp_http_client_set_post_field(TlmHttpClient, Data, Length);
 
