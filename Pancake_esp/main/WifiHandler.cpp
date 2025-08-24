@@ -25,8 +25,11 @@ void ObtainTime()
 
         // Check if time is set during the delay
         time(&now);
-        localtime_r(&now, &timeInfo);
-        if (timeInfo.tm_year >= (2016 - 1900))
+        if (localtime_r(&now, &timeInfo) == nullptr) {
+            ESP_LOGE(TAG, "localtime_r failed");
+            continue;
+        }
+        else if (timeInfo.tm_year >= (2016 - 1900))
         {
             ESP_LOGI(TAG, "Time set successfully");
             return;
@@ -41,7 +44,7 @@ void WifiReconnectTask(void *pvParameters)
 {
     for (;;)
     {
-     /*   
+        
         // If wifi has disconnected and a recconnect is not in progress
         if (WifiState == WIFI_STATE_DISCONNECTED)
         {
@@ -62,7 +65,7 @@ void WifiReconnectTask(void *pvParameters)
                 ESP_LOGE(TAG, "Failed to reconnect after %d attempts", MAX_RETRY_COUNT);
             }
         }
-        */
+        
         // Small delay between checks
         vTaskDelay(pdMS_TO_TICKS(RECONNECT_PERIOD_MS));
     }
@@ -156,12 +159,13 @@ void WifiInit()
 
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
+    // This causes a issue
+//    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
 
 
     ESP_LOGI(TAG, "Wi-Fi initialized. Connecting to %s...", WIFI_SSID);
 
     // Create reconnect task
-    ESP_ERROR_CHECK(xTaskCreate(WifiReconnectTask, "WiFiReconnect", 2500, NULL, 2,
-                    &WifiReconnectTaskHandle));
+    xTaskCreate(WifiReconnectTask, "WiFiReconnect", 2048, NULL, 2,
+                    &WifiReconnectTaskHandle);
 }
