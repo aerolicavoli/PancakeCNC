@@ -98,10 +98,10 @@ void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t event_id
     else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP)
     {
       //  ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
-        ESP_LOGI("WIFI", "Connected! Got IP: "); // IPSTR, IP2STR(&event->ip_info.ip));
+       ESP_LOGI("WIFI", "Connected! Got IP: "); // IPSTR, IP2STR(&event->ip_info.ip));
 
         //WifiState = WIFI_STATE_CONNECTED;
-        vTaskDelay(pdMS_TO_TICKS(3000));
+       // vTaskDelay(pdMS_TO_TICKS(3000));
         
         // Sync the time
         ObtainTime();

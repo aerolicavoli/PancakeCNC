@@ -23,8 +23,9 @@ static int UartVprintf(const char *Str, va_list Args)
 
 void EnableLoggingOverUART()
 {
+    // TODO, temporarily use native logging
     // Set the log output function to use UART
-    esp_log_set_vprintf(UartVprintf);
+    //esp_log_set_vprintf(UartVprintf);
 }
 
 void PiUIInit()
@@ -39,7 +40,7 @@ void PiUIInit()
     uart_set_pin(UART_NUM, UART_TX_PIN, UART_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
     uart_driver_install(UART_NUM, UART_BUF_SIZE, UART_BUF_SIZE, 0, NULL, 0);
 
-    EnableLoggingOverUART();
+    //EnableLoggingOverUART();
 
     // Test logging
     ESP_LOGI(TAG, "UART Initialized");
@@ -52,7 +53,7 @@ void PiUIInit()
         ESP_LOGE(TAG, "Failed to create CNC command queue");
     }
 
-    vTaskDelay(pdMS_TO_TICKS(1000)); // Wait for coms to init
+    //vTaskDelay(pdMS_TO_TICKS(1000)); // Wait for coms to init
 }
 
 void PiUIStart() { xTaskCreate(SerialCommunicationTask, "PiUI", 8192, NULL, 1, NULL); }
