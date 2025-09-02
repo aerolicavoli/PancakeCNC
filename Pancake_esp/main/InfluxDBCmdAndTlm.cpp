@@ -192,6 +192,9 @@ void CmdAndTlmInit(void)
 {
     TlmBufferMutex = xSemaphoreCreateMutex();
     assert(TlmBufferMutex != nullptr);
+
+    cmd_queue = xQueueCreate(5, sizeof(cmd_payload_t));
+    assert(cmd_queue != nullptr);
 }
 
 void CmdAndTlmStart(void)
