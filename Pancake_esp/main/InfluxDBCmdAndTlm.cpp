@@ -49,91 +49,6 @@ void format_time_string(time_t raw_time, char *buffer, size_t buffer_size) {
     strftime(buffer, buffer_size, "%Y-%m-%d %H:%M:%S", &timeinfo);
 }
 
-// Function to parse the InfluxDB Annotated CSV response
-void parse_influxdb_response(const char *response_body) {
-    // Check if the response contains actual data beyond the header
-    if (strstr(response_body, ",_result,0,") == NULL) {
-        ESP_LOGI(TAG, "No new data found in response.");
-        return;
-    }
-
-    // Extract the last non-empty line from the response
-    std::string last_line = get_last_non_empty_line(response_body);
-    ESP_LOGI(TAG, "Parsing line (length %d): '%s'", last_line.length(), last_line.c_str());
-
-    if (last_line.empty()) {
-        ESP_LOGD(TAG, "Skipping empty line.");
-        return;
-    }
-
-    // Use a mutable copy for tokenization
-    char *temp_line = strdup(last_line.c_str());
-    if (!temp_line) {
-        ESP_LOGE(TAG, "Failed to allocate memory for parsing.");
-        return;
-    }
-
-    char *rest = temp_line;
-    char *token;
-    int field_count = 0;
-    time_t new_timestamp = 0;
-    char new_payload_encoded[MAX_HTTP_OUTPUT_BUFFER];
-    memset(new_payload_encoded, 0, sizeof(new_payload_encoded));
-    const char *token_delimiter = ",";
-
-    // Tokenize the last data line by commas
-    while ((token = strtok_r(rest, token_delimiter, &rest)) != NULL) {
-        field_count++;
-        ESP_LOGD(TAG, "Token %d: '%s'", field_count, token);
-
-        if (field_count == 6) {
-            // Field 6 is the timestamp
-            struct tm tm;
-            // The timestamp format for strptime should be exact.
-            // InfluxDB often includes milliseconds and a timezone 'Z',
-            // which can cause issues. We'll simplify for now.
-            if (strptime(token, "%Y-%m-%dT%H:%M:%S", &tm)) {
-                new_timestamp = mktime(&tm);
-            } else {
-                ESP_LOGE(TAG, "Failed to parse CSV timestamp.");
-                free(temp_line);
-                return;
-            }
-        } else if (field_count == 7) {
-            // Field 7 is the payload (Base64 encoded)
-            strncpy(new_payload_encoded, token, sizeof(new_payload_encoded) - 1);
-            break; // Found the payload, no need to continue parsing this line
-        }
-    }
-
-    if (field_count < 7) {
-        ESP_LOGE(TAG, "Failed to parse CSV response: not enough fields (%d found).", field_count);
-    } else {
-        // Compare with the last received message timestamp
-        if (new_timestamp > last_message_timestamp) {
-            cmd_payload_t new_payload;
-            strncpy(new_payload.payload, new_payload_encoded, sizeof(new_payload.payload) - 1);
-            new_payload.timestamp = new_timestamp;
-
-            if (xQueueSend(cmd_queue, &new_payload, 0) != pdTRUE) {
-                ESP_LOGE(TAG, "Failed to post command to queue.");
-            } else {
-                last_message_timestamp = new_timestamp;
-                char time_str[50];
-                format_time_string(last_message_timestamp, time_str, sizeof(time_str));
-                ESP_LOGI(TAG, "Posted payload to queue. Time: %s, Payload: %s", time_str, new_payload.payload);
-            }
-        } else {
-            char time_str[50];
-            format_time_string(new_timestamp, time_str, sizeof(time_str));
-            ESP_LOGI(TAG, "Ignoring old message. Time: %s", time_str);
-        }
-    }
-    
-    free(temp_line);
-}
-
-
 // Function to handle HTTP events and process data
 esp_err_t _http_event_handler(esp_http_client_event_t *evt) {
     switch(evt->event_id) {
@@ -167,7 +82,30 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt) {
             
             // Trigger parsing of the full response
             if (output_len > 0) {
-                parse_influxdb_response(output_buffer);
+                InfluxDBCommand cmd;
+                if (parse_influxdb_command(output_buffer, cmd)) {
+                    if (cmd.timestamp > last_message_timestamp) {
+                        cmd_payload_t new_payload;
+                        memset(&new_payload, 0, sizeof(new_payload));
+                        new_payload.timestamp = cmd.timestamp;
+                        strncpy(new_payload.payload, cmd.payload.c_str(), sizeof(new_payload.payload) - 1);
+
+                        if (xQueueSend(cmd_queue, &new_payload, 0) != pdTRUE) {
+                            ESP_LOGE(TAG, "Failed to post command to queue.");
+                        } else {
+                            last_message_timestamp = cmd.timestamp;
+                            char time_str[50];
+                            format_time_string(last_message_timestamp, time_str, sizeof(time_str));
+                            ESP_LOGI(TAG, "Posted payload to queue. Time: %s, Payload: %s", time_str, new_payload.payload);
+                        }
+                    } else {
+                        char time_str[50];
+                        format_time_string(cmd.timestamp, time_str, sizeof(time_str));
+                        ESP_LOGI(TAG, "Ignoring old message. Time: %s", time_str);
+                    }
+                } else {
+                    ESP_LOGE(TAG, "Failed to parse InfluxDB response.");
+                }
             }
             break;
         case HTTP_EVENT_DISCONNECTED:
