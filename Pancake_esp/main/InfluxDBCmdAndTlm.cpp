@@ -22,167 +22,200 @@ esp_http_client_handle_t CmdHttpClient = NULL;
 
 #include "mbedtls/base64.h"
 
+// Maximum size of the HTTP response buffer. Adjust as needed.
+#define MAX_HTTP_OUTPUT_BUFFER 512
 
-// Function to handle HTTP events and print data to the log
+// Structure to hold the data we send to the FreeRTOS queue
+typedef struct {
+    time_t timestamp;
+    char payload[MAX_HTTP_OUTPUT_BUFFER];
+} cmd_payload_t;
+
+// FreeRTOS queue handle
+QueueHandle_t cmd_queue;
+
+// Global variables for handling fragmented HTTP responses
+static char *output_buffer;  // Buffer to store HTTP response
+static int output_len;       // Length of the stored response
+
+// Variable to track the timestamp of the last received message
+time_t last_message_timestamp = 0;
+
+// Helper function to format time for logging
+void format_time_string(time_t raw_time, char *buffer, size_t buffer_size) {
+    struct tm timeinfo;
+    localtime_r(&raw_time, &timeinfo);
+    strftime(buffer, buffer_size, "%Y-%m-%d %H:%M:%S", &timeinfo);
+}
+
+// Function to parse the InfluxDB Annotated CSV response
+void parse_influxdb_response(const char *response_body) {
+    // Check if the response contains actual data beyond the header
+    if (strstr(response_body, ",_result,0,") == NULL) {
+        ESP_LOGI(TAG, "No new data found in response.");
+        return;
+    }
+
+    // Use a copy of the response body for parsing
+    char *temp_body = strdup(response_body);
+    if (!temp_body) {
+        ESP_LOGE(TAG, "Failed to allocate memory for parsing.");
+        return;
+    }
+
+    char *line_rest = temp_body;
+    char *line;
+    const char *line_delimiter = "\n";
+    
+    // Find the last line of the response
+    // The relevant line is the last one with the actual data
+    char *last_data_line = NULL;
+    char *last_newline = strrchr(temp_body, '\n');
+    if (last_newline) {
+        last_data_line = strtok_r(last_newline + 1, line_delimiter, &line_rest);
+    }
+
+    if (!last_data_line) {
+        // Fallback to searching the whole body if a simple last line isn't found
+        last_data_line = strrchr(temp_body, '\n');
+        if (last_data_line) {
+            last_data_line++;
+        } else {
+            last_data_line = temp_body;
+        }
+    }
+    
+    // Use a temporary copy of the line to avoid modifying the strtok_r context
+    char *temp_line = strdup(last_data_line);
+    if (!temp_line) {
+        free(temp_body);
+        ESP_LOGE(TAG, "Failed to allocate memory for parsing.");
+        return;
+    }
+
+    // Remove any trailing whitespace or newline characters from the line
+    char *trimmed_line = temp_line;
+    size_t len = strlen(trimmed_line);
+    while (len > 0 && isspace((unsigned char)trimmed_line[len - 1])) {
+        trimmed_line[--len] = '\0';
+    }
+
+    ESP_LOGI(TAG, "Parsing line (length %d): '%s'", strlen(trimmed_line), trimmed_line);
+    if (strlen(trimmed_line) == 0) {
+        ESP_LOGD(TAG, "Skipping empty line.");
+        free(temp_body);
+        free(temp_line);
+        return;
+    }
+
+    char *rest = trimmed_line;
+    char *token;
+    int field_count = 0;
+    time_t new_timestamp = 0;
+    char new_payload_encoded[MAX_HTTP_OUTPUT_BUFFER];
+    memset(new_payload_encoded, 0, sizeof(new_payload_encoded));
+    const char *token_delimiter = ",";
+
+    // Tokenize the last data line by commas
+    while ((token = strtok_r(rest, token_delimiter, &rest)) != NULL) {
+        field_count++;
+        ESP_LOGD(TAG, "Token %d: '%s'", field_count, token);
+
+        if (field_count == 6) {
+            // Field 6 is the timestamp
+            struct tm tm;
+            // The timestamp format for strptime should be exact.
+            // InfluxDB often includes milliseconds and a timezone 'Z',
+            // which can cause issues. We'll simplify for now.
+            if (strptime(token, "%Y-%m-%dT%H:%M:%S", &tm)) {
+                new_timestamp = mktime(&tm);
+            } else {
+                ESP_LOGE(TAG, "Failed to parse CSV timestamp.");
+                free(temp_body);
+                free(temp_line);
+                return;
+            }
+        } else if (field_count == 7) {
+            // Field 7 is the payload (Base64 encoded)
+            strncpy(new_payload_encoded, token, sizeof(new_payload_encoded) - 1);
+            break; // Found the payload, no need to continue parsing this line
+        }
+    }
+
+    if (field_count < 7) {
+        ESP_LOGE(TAG, "Failed to parse CSV response: not enough fields (%d found).", field_count);
+    } else {
+        // Compare with the last received message timestamp
+        if (new_timestamp > last_message_timestamp) {
+            cmd_payload_t new_payload;
+            strncpy(new_payload.payload, new_payload_encoded, sizeof(new_payload.payload) - 1);
+            new_payload.timestamp = new_timestamp;
+
+            if (xQueueSend(cmd_queue, &new_payload, 0) != pdTRUE) {
+                ESP_LOGE(TAG, "Failed to post command to queue.");
+            } else {
+                last_message_timestamp = new_timestamp;
+                char time_str[50];
+                format_time_string(last_message_timestamp, time_str, sizeof(time_str));
+                ESP_LOGI(TAG, "Posted payload to queue. Time: %s, Payload: %s", time_str, new_payload.payload);
+            }
+        } else {
+            char time_str[50];
+            format_time_string(new_timestamp, time_str, sizeof(time_str));
+            ESP_LOGI(TAG, "Ignoring old message. Time: %s", time_str);
+        }
+    }
+    
+    free(temp_body);
+    free(temp_line);
+}
+
+
+// Function to handle HTTP events and process data
 esp_err_t _http_event_handler(esp_http_client_event_t *evt) {
     switch(evt->event_id) {
         case HTTP_EVENT_ERROR:
-            ESP_LOGD(TAG, "HTTP_EVENT_ERROR");
+            ESP_LOGE(TAG, "HTTP_EVENT_ERROR");
             break;
         case HTTP_EVENT_ON_CONNECTED:
-            ESP_LOGD(TAG, "HTTP_EVENT_ON_CONNECTED");
+            ESP_LOGI(TAG, "HTTP_EVENT_ON_CONNECTED");
             break;
         case HTTP_EVENT_HEADER_SENT:
-            ESP_LOGD(TAG, "HTTP_EVENT_HEADER_SENT");
+            ESP_LOGI(TAG, "HTTP_EVENT_HEADER_SENT");
             break;
         case HTTP_EVENT_ON_HEADER:
-            ESP_LOGD(TAG, "HTTP_EVENT_ON_HEADER, key=%s, value=%s", evt->header_key, evt->header_value);
+            ESP_LOGI(TAG, "HTTP_EVENT_ON_HEADER, key=%s, value=%s", evt->header_key, evt->header_value);
             break;
         case HTTP_EVENT_ON_DATA:
             ESP_LOGI(TAG, "HTTP_EVENT_ON_DATA, %d bytes received:", evt->data_len);
-            // Print the received data directly to the log
-            ESP_LOGI(TAG, "%.*s", evt->data_len, (char*)evt->data);
+            // Append incoming data chunks to the output buffer
+            if (output_len + evt->data_len < MAX_HTTP_OUTPUT_BUFFER) {
+                memcpy(output_buffer + output_len, evt->data, evt->data_len);
+                output_len += evt->data_len;
+            } else {
+                ESP_LOGE(TAG, "Output buffer overflow.");
+            }
             break;
         case HTTP_EVENT_ON_FINISH:
-            ESP_LOGD(TAG, "HTTP_EVENT_ON_FINISH");
+            ESP_LOGI(TAG, "HTTP_EVENT_ON_FINISH");
+            // Null-terminate the buffer
+            output_buffer[output_len] = '\0';
+            ESP_LOGI(TAG, "Full response received:\n%s", output_buffer);
+            
+            // Trigger parsing of the full response
+            if (output_len > 0) {
+                parse_influxdb_response(output_buffer);
+            }
             break;
         case HTTP_EVENT_DISCONNECTED:
-            ESP_LOGD(TAG, "HTTP_EVENT_DISCONNECTED");
+            ESP_LOGI(TAG, "HTTP_EVENT_DISCONNECTED");
             break;
         case HTTP_EVENT_REDIRECT:
-            ESP_LOGD(TAG, "HTTP_EVENT_REDIRECT");
+            ESP_LOGI(TAG, "HTTP_EVENT_REDIRECT");
             break;
     }
     return ESP_OK;
 }
-
-
-// Read entire HTTP body (handles chunked responses)
-static bool http_read_all(esp_http_client_handle_t h, char **out, size_t *out_len) {
-    const int CHUNK = 512;
-    size_t cap = 0, len = 0;
-    char *buf = NULL;
-    for (;;) {
-        if (len + CHUNK + 1 > cap) {
-            size_t ncap = cap ? cap * 2 : 1024;
-            char *nb = (char *)realloc(buf, ncap);
-            if (!nb) { free(buf); return false; }
-            buf = nb; cap = ncap;
-        }
-        int n = esp_http_client_read_response(h, buf + len, CHUNK);
-        if (n < 0) { free(buf); return false; }
-        if (n == 0) break;
-        len += n;
-    }
-    if (!buf) return false;
-    buf[len] = 0;
-    *out = buf; *out_len = len;
-    return true;
-}
-
-// Extract last data line from annotated CSV and get base64 (_value) and _time
-static bool influx_csv_extract_last_b64(const char *csv, size_t len,
-                                        char *out_b64, size_t out_b64_sz,
-                                        char *out_iso_time, size_t out_time_sz) {
-    if (!csv || !len) return false;
-
-    // Walk line by line and remember the last data line we see.
-    const char *p = csv, *end = csv + len;
-    const char *best_start = NULL, *best_end = NULL;
-
-    while (p < end) {
-        const char *line_start = p;
-        // find EOL
-        while (p < end && *p != '\n' && *p != '\r') p++;
-        const char *line_end = p;
-        // skip CRLF
-        while (p < end && (*p == '\n' || *p == '\r')) p++;
-
-        size_t l = (size_t)(line_end - line_start);
-        if (l == 0) continue;                // empty line
-        if (*line_start == '#') continue;    // annotated metadata
-
-        // This line is either the column header (names) or a data row.
-        // We expect names like: ,result,table,_time,_value
-        // Heuristic: header line contains "_time" AND "_value" literals,
-        // while a data row has an ISO timestamp like "2025-...T...Z".
-        const char *time_ptr = NULL;
-        int commas = 0;
-        for (const char *q = line_start; q < line_end; ++q) {
-            if (*q == ',') commas++;
-            if (*q == 'T') time_ptr = q; // crude hint for ISO8601
-        }
-
-        // Require at least 4 commas ( ,result,table,_time,_value )
-        if (commas < 4) continue;
-
-        // If it doesn't look like it has an ISO8601 time, treat as header and skip.
-        bool looks_like_time = false;
-        if (time_ptr) {
-            // crude check for "...T...Z"
-            for (const char *q = time_ptr; q < line_end; ++q) {
-                if (*q == 'Z') { looks_like_time = true; break; }
-            }
-        }
-        if (!looks_like_time) continue; // probably the header line
-
-        // This is a data line; remember it as the latest
-        best_start = line_start;
-        best_end = line_end;
-    }
-
-    if (!best_start) return false;
-
-    // Extract last two columns: (_time, _value) since query keeps only those + result/table
-    // Split by commas into a few pointers
-    const int MAXC = 16;
-    const char *cols[MAXC] = {0};
-    int col_starts[MAXC] = {0};
-    int ncol = 0;
-    int col_start = 0;
-    for (int i = 0; best_start + i < best_end && ncol < MAXC; ++i) {
-        if (best_start[i] == ',') {
-            cols[ncol] = best_start + col_start;
-            col_starts[ncol] = col_start;
-            ncol++;
-            col_start = i + 1;
-        }
-    }
-    // push last column
-    if (ncol < MAXC) {
-        cols[ncol] = best_start + col_start;
-        ncol++;
-    }
-    if (ncol < 5) return false;
-
-    // Expected layout: 0:"", 1:"result", 2:"table", 3:"_time", 4:"_value"
-    const char *time_col = cols[3];
-    const char *value_col = cols[4];
-
-    // Trim trailing spaces from columns (rare, but safe)
-    auto trimlen = [](const char *s, const char *lim) -> size_t {
-        const char *e = lim;
-        while (e > s && (e[-1] == ' ' || e[-1] == '\t')) e--;
-        return (size_t)(e - s);
-    };
-
-    // Compute ends
-    const char *time_end = (ncol > 4) ? cols[4] - 1 : best_end;
-    const char *value_end = best_end;
-
-    size_t tlen = trimlen(time_col, time_end);
-    size_t vlen = trimlen(value_col, value_end);
-
-    if (out_iso_time && out_time_sz > 0) {
-        size_t cpy = tlen < out_time_sz - 1 ? tlen : out_time_sz - 1;
-        memcpy(out_iso_time, time_col, cpy); out_iso_time[cpy] = 0;
-    }
-    if (!vlen || vlen + 1 > out_b64_sz) return false;
-    memcpy(out_b64, value_col, vlen); out_b64[vlen] = 0;
-
-    return true;
-}
-
 
 
 static int InfluxVprintf(const char *str, va_list args)
@@ -270,6 +303,14 @@ void CmdAndTlmStart(void)
 
 void QueryCmdTask(void *Parameters)
 {
+    output_buffer = (char *)malloc(MAX_HTTP_OUTPUT_BUFFER);
+    if (!output_buffer) {
+        ESP_LOGE(TAG, "Failed to allocate memory for HTTP output buffer");
+        vTaskDelete(NULL);
+        return;
+    }
+    memset(output_buffer, 0, MAX_HTTP_OUTPUT_BUFFER);
+
     for (;;)
     {   
         vTaskDelay(pdMS_TO_TICKS(TRANSMITPERIOD_MS));
@@ -319,6 +360,9 @@ void QueryCmdTask(void *Parameters)
         esp_http_client_set_post_field(CmdHttpClient, fluxQuery, strlen(fluxQuery));
 
         // Perform the HTTP request
+        // Reset buffer before each new request
+        memset(output_buffer, 0, MAX_HTTP_OUTPUT_BUFFER);
+        output_len = 0;
         esp_err_t err = esp_http_client_perform(CmdHttpClient);
         if (err == ESP_OK) {
             ESP_LOGI(TAG, "HTTP POST Status = %d, content_length = %d",
@@ -327,9 +371,6 @@ void QueryCmdTask(void *Parameters)
         } else {
             ESP_LOGE(TAG, "HTTP POST request failed: %s", esp_err_to_name(err));
         }
-    
-
-
     }
 }
 
@@ -468,9 +509,9 @@ void SendDataToInflux(const char *Data, size_t Length)
 
         if (err == ESP_OK)
         {
-            ESP_LOGD(TAG, "Data sent successfully, attempt %d", i + 1);
-            ESP_LOGD(TAG, "Data size: %d bytes", Length);
-            ESP_LOGD(TAG, "HTTP Status Code: %d", esp_http_client_get_status_code(TlmHttpClient));
+            ESP_LOGI(TAG, "Data sent successfully, attempt %d", i + 1);
+            ESP_LOGI(TAG, "Data size: %d bytes", Length);
+            ESP_LOGI(TAG, "HTTP Status Code: %d", esp_http_client_get_status_code(TlmHttpClient));
             break;
         }
         else
