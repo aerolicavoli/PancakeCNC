@@ -1,4 +1,5 @@
 #include "InfluxDBCmdAndTlm.h"
+#include "InfluxDBParser.h"
 
 static const char *TAG = "InfluxDBCmdAndTlm";
 
@@ -56,59 +57,23 @@ void parse_influxdb_response(const char *response_body) {
         return;
     }
 
-    // Use a copy of the response body for parsing
-    char *temp_body = strdup(response_body);
-    if (!temp_body) {
-        ESP_LOGE(TAG, "Failed to allocate memory for parsing.");
-        return;
-    }
+    // Extract the last non-empty line from the response
+    std::string last_line = get_last_non_empty_line(response_body);
+    ESP_LOGI(TAG, "Parsing line (length %d): '%s'", last_line.length(), last_line.c_str());
 
-    char *line_rest = temp_body;
-    char *line;
-    const char *line_delimiter = "\n";
-    
-    // Find the last line of the response
-    // The relevant line is the last one with the actual data
-    char *last_data_line = NULL;
-    char *last_newline = strrchr(temp_body, '\n');
-    if (last_newline) {
-        last_data_line = strtok_r(last_newline + 1, line_delimiter, &line_rest);
-    }
-
-    if (!last_data_line) {
-        // Fallback to searching the whole body if a simple last line isn't found
-        last_data_line = strrchr(temp_body, '\n');
-        if (last_data_line) {
-            last_data_line++;
-        } else {
-            last_data_line = temp_body;
-        }
-    }
-    
-    // Use a temporary copy of the line to avoid modifying the strtok_r context
-    char *temp_line = strdup(last_data_line);
-    if (!temp_line) {
-        free(temp_body);
-        ESP_LOGE(TAG, "Failed to allocate memory for parsing.");
-        return;
-    }
-
-    // Remove any trailing whitespace or newline characters from the line
-    char *trimmed_line = temp_line;
-    size_t len = strlen(trimmed_line);
-    while (len > 0 && isspace((unsigned char)trimmed_line[len - 1])) {
-        trimmed_line[--len] = '\0';
-    }
-
-    ESP_LOGI(TAG, "Parsing line (length %d): '%s'", strlen(trimmed_line), trimmed_line);
-    if (strlen(trimmed_line) == 0) {
+    if (last_line.empty()) {
         ESP_LOGD(TAG, "Skipping empty line.");
-        free(temp_body);
-        free(temp_line);
         return;
     }
 
-    char *rest = trimmed_line;
+    // Use a mutable copy for tokenization
+    char *temp_line = strdup(last_line.c_str());
+    if (!temp_line) {
+        ESP_LOGE(TAG, "Failed to allocate memory for parsing.");
+        return;
+    }
+
+    char *rest = temp_line;
     char *token;
     int field_count = 0;
     time_t new_timestamp = 0;
@@ -131,7 +96,6 @@ void parse_influxdb_response(const char *response_body) {
                 new_timestamp = mktime(&tm);
             } else {
                 ESP_LOGE(TAG, "Failed to parse CSV timestamp.");
-                free(temp_body);
                 free(temp_line);
                 return;
             }
@@ -166,7 +130,6 @@ void parse_influxdb_response(const char *response_body) {
         }
     }
     
-    free(temp_body);
     free(temp_line);
 }
 
