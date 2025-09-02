@@ -10,4 +10,5 @@ idf_component_register(SRCS "StepperMotor.cpp"
  "PanMath.cpp"
  "WifiHandler.cpp"
  "InfluxDBCmdAndTlm.cpp"
+ "CommandHandler.cpp"
  INCLUDE_DIRS ".")

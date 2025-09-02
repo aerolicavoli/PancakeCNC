@@ -1,5 +1,6 @@
 #include "InfluxDBCmdAndTlm.h"
 #include "InfluxDBParser.h"
+#include "CommandHandler.h"
 
 static const char *TAG = "InfluxDBCmdAndTlm";
 
@@ -21,19 +22,8 @@ static TaskHandle_t QueryCmdsTaskHandle = NULL;
 esp_http_client_handle_t TlmHttpClient = NULL;
 esp_http_client_handle_t CmdHttpClient = NULL;
 
-#include "mbedtls/base64.h"
-
 // Maximum size of the HTTP response buffer. Adjust as needed.
 #define MAX_HTTP_OUTPUT_BUFFER 512
-
-// Structure to hold the data we send to the FreeRTOS queue
-typedef struct {
-    time_t timestamp;
-    char payload[MAX_HTTP_OUTPUT_BUFFER];
-} cmd_payload_t;
-
-// FreeRTOS queue handle
-QueueHandle_t cmd_queue;
 
 // Global variables for handling fragmented HTTP responses
 static char *output_buffer;  // Buffer to store HTTP response
@@ -192,9 +182,7 @@ void CmdAndTlmInit(void)
 {
     TlmBufferMutex = xSemaphoreCreateMutex();
     assert(TlmBufferMutex != nullptr);
-
-    cmd_queue = xQueueCreate(5, sizeof(cmd_payload_t));
-    assert(cmd_queue != nullptr);
+    CommandHandlerInit();
 }
 
 void CmdAndTlmStart(void)
@@ -203,6 +191,7 @@ void CmdAndTlmStart(void)
     xTaskCreate(TransmitTlmTask, "TlmTransmit", 8192, NULL, 1, &TransmitTlmTaskHandle);
     xTaskCreate(AggregateTlmTask, "TlmAggregate", 8192, NULL, 1, &AggregateTlmTaskHandle);
     xTaskCreate(QueryCmdTask, "CmdQuery", 8192, NULL, 1, &QueryCmdsTaskHandle);
+    CommandHandlerStart();
 }
 
 void QueryCmdTask(void *Parameters)
