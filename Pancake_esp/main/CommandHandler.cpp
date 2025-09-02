@@ -32,7 +32,7 @@ static void handle_command(const uint8_t *data, size_t len) {
             size_t copy_len = payload_len < sizeof(msg) - 1 ? payload_len : sizeof(msg) - 1;
             memcpy(msg, data + 2, copy_len);
             msg[copy_len] = '\0';
-            ESP_LOGI("CommandParser", "%s", msg);
+            ESP_LOGD("CommandParser", "%s", msg);
             break;
         }
         default:

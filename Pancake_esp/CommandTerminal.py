@@ -5,9 +5,10 @@ Usage:
     $ python command_terminal.py
     > \E Hello World
 
-The first character after the backslash selects the opcode. For example, ``\E``
-uses opcode ``0x69`` which causes the firmware to echo the following message.
-Any other opcode uses the ASCII value of the character.
+Type ``help`` or ``?`` to list available opcodes. The first character after the
+backslash selects the opcode. For example, ``\E`` uses opcode ``0x69`` which
+causes the firmware to echo the following message. Any other opcode uses the
+ASCII value of the character.
 
 Connection parameters are taken from the following environment variables:
     INFLUXDB_URL        Base URL of the InfluxDB instance (e.g. http://localhost:8086)
@@ -25,7 +26,7 @@ import base64
 import os
 import sys
 import time
-from typing import Optional
+from typing import Optional, Dict, Tuple
 
 import requests
 
@@ -36,6 +37,18 @@ INFLUXDB_ORG = os.environ.get("INFLUXDB_ORG")
 INFLUXDB_CMD_BUCKET = os.environ.get("INFLUXDB_CMD_BUCKET")
 
 
+OPCODES: Dict[str, Tuple[str, int]] = {
+    "E": ("Echo", 0x69),
+}
+
+
+def print_help() -> None:
+    print("Available opcodes:")
+    for key, (name, code) in OPCODES.items():
+        print(f"  \\{key} <msg> - {name} (0x{code:02X})")
+    print("  \\X <msg> - Use ASCII value of X as opcode")
+
+
 def _require(env: Optional[str], name: str) -> str:
     if not env:
         print(f"Environment variable {name} must be set", file=sys.stderr)
@@ -44,7 +57,7 @@ def _require(env: Optional[str], name: str) -> str:
 
 
 def _build_packet(opcode_char: str, message: str) -> bytes:
-    opcode = 0x69 if opcode_char == "E" else ord(opcode_char)
+    opcode = OPCODES.get(opcode_char, ("", ord(opcode_char)))[1]
     data = message.encode("utf-8")
     if len(data) > 255:
         raise ValueError("message too long for single-byte length field")
@@ -82,12 +95,15 @@ def main() -> None:
                 continue
             if line.lower() in {"quit", "exit"}:
                 break
-            if not line.startswith("\\") or len(line) < 3:
+            if line in {"help", "?", "\\?"}:
+                print_help()
+                continue
+            if not line.startswith("\\") or len(line) < 2:
                 print("Commands must start with \\X text", file=sys.stderr)
                 continue
             opcode_char = line[1]
             # skip optional space after opcode
-            msg = line[3:] if line[2] == " " else line[2:]
+            msg = line[3:] if len(line) > 2 and line[2] == " " else line[2:]
             try:
                 pkt = _build_packet(opcode_char, msg)
                 _write_packet(pkt)

@@ -1,6 +1,7 @@
 #include "InfluxDBCmdAndTlm.h"
 #include "InfluxDBParser.h"
 #include "CommandHandler.h"
+#include <cstring>
 
 static const char *TAG = "InfluxDBCmdAndTlm";
 
@@ -46,16 +47,16 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt) {
             ESP_LOGE(TAG, "HTTP_EVENT_ERROR");
             break;
         case HTTP_EVENT_ON_CONNECTED:
-            ESP_LOGI(TAG, "HTTP_EVENT_ON_CONNECTED");
+            ESP_LOGD(TAG, "HTTP_EVENT_ON_CONNECTED");
             break;
         case HTTP_EVENT_HEADER_SENT:
-            ESP_LOGI(TAG, "HTTP_EVENT_HEADER_SENT");
+            ESP_LOGD(TAG, "HTTP_EVENT_HEADER_SENT");
             break;
         case HTTP_EVENT_ON_HEADER:
-            ESP_LOGI(TAG, "HTTP_EVENT_ON_HEADER, key=%s, value=%s", evt->header_key, evt->header_value);
+            ESP_LOGD(TAG, "HTTP_EVENT_ON_HEADER, key=%s, value=%s", evt->header_key, evt->header_value);
             break;
         case HTTP_EVENT_ON_DATA:
-            ESP_LOGI(TAG, "HTTP_EVENT_ON_DATA, %d bytes received:", evt->data_len);
+            ESP_LOGD(TAG, "HTTP_EVENT_ON_DATA, %d bytes received:", evt->data_len);
             // Append incoming data chunks to the output buffer
             if (output_len + evt->data_len < MAX_HTTP_OUTPUT_BUFFER) {
                 memcpy(output_buffer + output_len, evt->data, evt->data_len);
@@ -65,10 +66,10 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt) {
             }
             break;
         case HTTP_EVENT_ON_FINISH:
-            ESP_LOGI(TAG, "HTTP_EVENT_ON_FINISH");
+            ESP_LOGD(TAG, "HTTP_EVENT_ON_FINISH");
             // Null-terminate the buffer
             output_buffer[output_len] = '\0';
-            ESP_LOGI(TAG, "Full response received:\n%s", output_buffer);
+            ESP_LOGD(TAG, "Full response received:\n%s", output_buffer);
             
             // Trigger parsing of the full response
             if (output_len > 0) {
@@ -86,23 +87,27 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt) {
                             last_message_timestamp = cmd.timestamp;
                             char time_str[50];
                             format_time_string(last_message_timestamp, time_str, sizeof(time_str));
-                            ESP_LOGI(TAG, "Posted payload to queue. Time: %s, Payload: %s", time_str, new_payload.payload);
+                            ESP_LOGD(TAG, "Posted payload to queue. Time: %s, Payload: %s", time_str, new_payload.payload);
                         }
                     } else {
                         char time_str[50];
                         format_time_string(cmd.timestamp, time_str, sizeof(time_str));
-                        ESP_LOGI(TAG, "Ignoring old message. Time: %s", time_str);
+                        ESP_LOGD(TAG, "Ignoring old message. Time: %s", time_str);
                     }
                 } else {
-                    ESP_LOGE(TAG, "Failed to parse InfluxDB response.");
+                    if (strstr(output_buffer, ",_result,0,") == NULL) {
+                        ESP_LOGD(TAG, "No command in response.");
+                    } else {
+                        ESP_LOGE(TAG, "Failed to parse InfluxDB response.");
+                    }
                 }
             }
             break;
         case HTTP_EVENT_DISCONNECTED:
-            ESP_LOGI(TAG, "HTTP_EVENT_DISCONNECTED");
+            ESP_LOGD(TAG, "HTTP_EVENT_DISCONNECTED");
             break;
         case HTTP_EVENT_REDIRECT:
-            ESP_LOGI(TAG, "HTTP_EVENT_REDIRECT");
+            ESP_LOGD(TAG, "HTTP_EVENT_REDIRECT");
             break;
     }
     return ESP_OK;
@@ -258,7 +263,7 @@ void QueryCmdTask(void *Parameters)
         output_len = 0;
         esp_err_t err = esp_http_client_perform(CmdHttpClient);
         if (err == ESP_OK) {
-            ESP_LOGI(TAG, "HTTP POST Status = %d, content_length = %d",
+            ESP_LOGD(TAG, "HTTP POST Status = %d, content_length = %d",
                     esp_http_client_get_status_code(CmdHttpClient),
                     (int)esp_http_client_get_content_length(CmdHttpClient));
         } else {
@@ -402,9 +407,9 @@ void SendDataToInflux(const char *Data, size_t Length)
 
         if (err == ESP_OK)
         {
-            ESP_LOGI(TAG, "Data sent successfully, attempt %d", i + 1);
-            ESP_LOGI(TAG, "Data size: %d bytes", Length);
-            ESP_LOGI(TAG, "HTTP Status Code: %d", esp_http_client_get_status_code(TlmHttpClient));
+            ESP_LOGD(TAG, "Data sent successfully, attempt %d", i + 1);
+            ESP_LOGD(TAG, "Data size: %d bytes", Length);
+            ESP_LOGD(TAG, "HTTP Status Code: %d", esp_http_client_get_status_code(TlmHttpClient));
             break;
         }
         else
