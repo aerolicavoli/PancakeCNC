@@ -10,7 +10,7 @@ extern "C"
 {
 
 #include "PiUI.h"
-//#include "Safety.h"
+#include "Safety.h"
 //#include "UI.h"
 
     void app_main(void)
@@ -20,8 +20,8 @@ extern "C"
         esp_log_level_set("wifi", ESP_LOG_WARN);
 
         // Safety first
-        //SafetyInit();
-        //SafetyStart(); 
+        SafetyInit();
+        SafetyStart();
 
         // Initialize the tasks
        // PiUIInit();
@@ -32,6 +32,7 @@ extern "C"
         CmdAndTlmInit();
 
         // Start the tasks
+        vTaskDelay(pdMS_TO_TICKS(5000));
         CmdAndTlmStart();
        // PiUIStart();
         // UIStart();

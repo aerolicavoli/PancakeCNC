@@ -80,8 +80,7 @@ void SafetyTask(void *Parameters)
         TelemetryData.S0LimitSwitch = s0Lim;
         TelemetryData.S1LimitSwitch = s1Lim;
 
-        ESP_ERROR_CHECK(
-            temperature_sensor_get_celsius(ESPTempSensorHandle, &TelemetryData.espTemp_C));
+        temperature_sensor_get_celsius(ESPTempSensorHandle, &TelemetryData.espTemp_C);
 
         // Delay 10ms
         vTaskDelay(safetyUpdatePeriod_Ticks);
