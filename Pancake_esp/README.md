@@ -1,77 +1,40 @@
-| Supported Targets | ESP32 | ESP32-C2 | ESP32-C3 | ESP32-C6 | ESP32-H2 | ESP32-S2 | ESP32-S3 |
-| ----------------- | ----- | -------- | -------- | -------- | -------- | -------- | -------- |
+## Pancake_esp Command Protocol and CLI
 
-# Blink Example
+This firmware consumes commands from an InfluxDB “command” bucket. Commands are binary packets encoded as:
 
-(See the README.md file in the upper level 'examples' directory for more information about examples.)
+- Byte 0: opcode
+- Byte 1: payload length (n)
+- Bytes 2..(n+1): payload bytes
 
-This example demonstrates how to blink a LED using GPIO or using the [led_strip](https://components.espressif.com/component/espressif/led_strip) component for the addressable LED, i.e. [WS2812](https://cdn-shop.adafruit.com/datasheets/WS2812B.pdf).
+### Opcodes (firmware)
 
-The `led_strip` is installed via [component manager](main/idf_component.yml).
+- 0x69: Echo (E <message>)
+- 0x01: Emergency Stop (immediate)
+- 0x02: Resume (immediate)
+- 0x11: CNC_Spiral
+- 0x12: CNC_Jog (reserved)
+- 0x13: Wait
+- 0x14: CNC_Sine
+- 0x15: CNC_ConstantSpeed
 
-## How to Use Example
+Payloads are little-endian C structs matching the guidance configs (see headers under `main/`).
 
-Before project configuration and build, be sure to set the correct chip target using `idf.py set-target <chip_name>`.
+### Python Command Terminal
 
-### Hardware Required
+The included `CommandTerminal.py` sends commands using a simplified syntax:
 
-* A development board with Espressif SoC (e.g., ESP32-DevKitC, ESP-WROVER-KIT, etc.)
-* A USB cable for Power supply and programming
+- `E Hello World`
+- `CNC_Spiral CenterX_m=0.2 LinearSpeed_mps=0.05` (defaults apply; e.g., `SpiralConstant_mprad=0.2`)
+- `Wait timeout_ms=500`
+- `CNC_Sine Amplitude_deg=10 Frequency_hz=0.25`
+- `CNC_ConstantSpeed S0Speed_degps=0 S1Speed_degps=45`
+- `run_file TestProgram.txt` (newline-delimited commands)
 
-Some development boards use an addressable LED instead of a regular one. These development boards include:
+Notes:
 
-| Board                | LED type             | Pin                  |
-| -------------------- | -------------------- | -------------------- |
-| ESP32-C3-DevKitC-1   | Addressable          | GPIO8                |
-| ESP32-C3-DevKitM-1   | Addressable          | GPIO8                |
-| ESP32-S2-DevKitM-1   | Addressable          | GPIO18               |
-| ESP32-S2-Saola-1     | Addressable          | GPIO18               |
-| ESP32-S3-DevKitC-1   | Addressable          | GPIO48               |
+- Key-values may be space or comma separated. Synonyms `Center_X_m`/`Center_Y_m` are accepted.
+- Environment variables required: `INFLUXDB_URL`, `INFLUXDB_TOKEN`, `INFLUXDB_ORG`, `INFLUXDB_CMD_BUCKET`.
 
-See [Development Boards](https://www.espressif.com/en/products/devkits) for more information about it.
+### Round-trip Testing
 
-### Configure the Project
-
-Open the project configuration menu (`idf.py menuconfig`).
-
-In the `Example Configuration` menu:
-
-* Select the LED type in the `Blink LED type` option.
-  * Use `GPIO` for regular LED blink.
-* Set the GPIO number used for the signal in the `Blink GPIO number` option.
-* Set the blinking period in the `Blink period in ms` option.
-
-### Build and Flash
-
-Run `idf.py -p PORT flash monitor` to build, flash and monitor the project.
-
-(To exit the serial monitor, type ``Ctrl-]``.)
-
-See the [Getting Started Guide](https://docs.espressif.com/projects/esp-idf/en/latest/get-started/index.html) for full steps to configure and use ESP-IDF to build projects.
-
-## Example Output
-
-As you run the example, you will see the LED blinking, according to the previously defined period. For the addressable LED, you can also change the LED color by setting the `led_strip_set_pixel(led_strip, 0, 16, 16, 16);` (LED Strip, Pixel Number, Red, Green, Blue) with values from 0 to 255 in the [source file](main/blink_example_main.c).
-
-```text
-I (315) example: Example configured to blink addressable LED!
-I (325) example: Turning the LED OFF!
-I (1325) example: Turning the LED ON!
-I (2325) example: Turning the LED OFF!
-I (3325) example: Turning the LED ON!
-I (4325) example: Turning the LED OFF!
-I (5325) example: Turning the LED ON!
-I (6325) example: Turning the LED OFF!
-I (7325) example: Turning the LED ON!
-I (8325) example: Turning the LED OFF!
-```
-
-Note: The color order could be different according to the LED model.
-
-The pixel number indicates the pixel position in the LED strip. For a single LED, use 0.
-
-## Troubleshooting
-
-* If the LED isn't blinking, check the GPIO or the LED type selection in the `Example Configuration` menu.
-
-For any technical queries, please open an [issue](https://github.com/espressif/esp-idf/issues) on GitHub. We will get back to you soon.
+Use `RoundtripTest.py` to send a command and query it back from InfluxDB. It attempts to source `Secret.sh` if env vars are missing.

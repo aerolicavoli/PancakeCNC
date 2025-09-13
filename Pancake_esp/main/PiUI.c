@@ -30,6 +30,9 @@ void EnableLoggingOverUART()
 
 void PiUIInit()
 {
+
+    // Deprecated
+    /*
     // Configure UART2 parameters
     uart_config_t uartConfig = {.baud_rate = UART_BAUD_RATE,
                                 .data_bits = UART_DATA_8_BITS,
@@ -54,6 +57,7 @@ void PiUIInit()
     }
 
     //vTaskDelay(pdMS_TO_TICKS(1000)); // Wait for coms to init
+    */
 }
 
 void PiUIStart() { xTaskCreate(SerialCommunicationTask, "PiUI", 8192, NULL, 1, NULL); }

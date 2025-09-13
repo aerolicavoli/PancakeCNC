@@ -2,6 +2,7 @@
 #define INFLUXDB_PARSER_H
 
 #include <string>
+#include <vector>
 #include <ctime>
 
 // Simple structure to hold a command extracted from InfluxDB.
@@ -13,13 +14,13 @@ struct InfluxDBCommand {
 };
 
 // Return the last non-empty line from an InfluxDB CSV response.
-// Lines containing only whitespace are ignored. If no such line exists,
-// an empty string is returned.
 std::string get_last_non_empty_line(const std::string &body);
 
-// Parse an InfluxDB annotated CSV response and extract the timestamp and
-// payload from the last non-empty data line. Returns true on success and
-// populates the provided InfluxDBCommand structure.
+// Parse only the last command (legacy helper)
 bool parse_influxdb_command(const std::string &body, InfluxDBCommand &cmd);
+
+// Parse all commands contained in the CSV body. Appends to 'out'.
+// Returns the number of commands parsed.
+size_t parse_influxdb_command_list(const std::string &body, std::vector<InfluxDBCommand> &out);
 
 #endif // INFLUXDB_PARSER_H

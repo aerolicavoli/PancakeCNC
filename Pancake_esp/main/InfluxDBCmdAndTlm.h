@@ -21,7 +21,7 @@
 #define BUFFER_SIZE 2000
 #define WARN_BUFFER_SIZE 1500
 #define TRANSMITPERIOD_MS 900
-#define CMD_QUERY_LOOKBACK_MS 500000
+#define CMD_QUERY_LOOKBACK_MS 10000
 
 // Function declarations
 void CmdAndTlmInit(void);

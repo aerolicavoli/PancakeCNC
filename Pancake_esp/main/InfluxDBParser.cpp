@@ -100,3 +100,38 @@ bool parse_influxdb_command(const std::string &body, InfluxDBCommand &cmd) {
     cmd.payload = tokens[6];
     return true;
 }
+
+size_t parse_influxdb_command_list(const std::string &body, std::vector<InfluxDBCommand> &out) {
+    // Quick check for presence of data rows
+    if (body.find(",_result,") == std::string::npos) {
+        return 0;
+    }
+
+    std::istringstream stream(body);
+    std::string line;
+    size_t count = 0;
+    while (std::getline(stream, line)) {
+        // Skip comments/headers
+        if (line.empty() || line[0] == '#') continue;
+        // Expect data rows to contain ",_result,"
+        if (line.find(",_result,") == std::string::npos) continue;
+
+        std::vector<std::string> tokens;
+        std::stringstream ss(line);
+        std::string item;
+        while (std::getline(ss, item, ',')) {
+            tokens.push_back(item);
+        }
+        if (tokens.size() < 7) continue;
+
+        time_t timestamp;
+        if (!parse_iso8601(tokens[5], timestamp)) continue;
+
+        InfluxDBCommand cmd;
+        cmd.timestamp = timestamp;
+        cmd.payload = tokens[6];
+        out.push_back(std::move(cmd));
+        ++count;
+    }
+    return count;
+}

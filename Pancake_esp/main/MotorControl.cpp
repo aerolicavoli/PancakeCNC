@@ -1,4 +1,5 @@
 #include "MotorControl.h"
+#include "CommandHandler.h"
 
 const char *TAG = "CNCControl";
 
@@ -13,7 +14,7 @@ Vector2D Target_m{0.0f, 0.0f};
 
 bool CNCEnabled = false;
 
-std::vector<uint8_t> TestProgram;
+// CNC instructions now arrive via cmd_queue_cnc (decoded_cmd_payload_t)
 
 const float motor_step_size_deg = 0.9 / 16.0; // TODO, track down 16 error term
 
@@ -25,55 +26,10 @@ static StepperMotor S1Motor(S1_MOTOR_PULSE, S1_MOTOR_DIR, 800.0, 50.0, motor_ste
                             "S1MOTOR", true);
 static StepperMotor PumpMotor(PUMP_MOTOR_PULSE, PUMP_MOTOR_DIR, 200.0, 200, motor_step_size_deg, "PUMPMOTOR", true);
 
-void WriteTestProgram(GeneralGuidance *GuidancePtr, std::vector<std::uint8_t> &stream)
-{
-    stream.push_back(GuidancePtr->GetOpCode());
-    stream.push_back(static_cast<std::uint8_t>(GuidancePtr->GetConfigLength()));
-
-    const auto *raw = reinterpret_cast<const std::uint8_t *>(GuidancePtr->GetConfig());
-    stream.insert(stream.end(), raw, raw + GuidancePtr->GetConfigLength());
-}
+// No longer writing a local test program stream; all commands come from queue
 
 void MotorControlInit()
 {
-    // TODO future work to build the test program externally and then transmit to device
-    /*
-    SineGuidance sineTemp;
-    sineTemp.Config.Frequency_hz = 0.05f;
-    sineTemp.Config.Amplitude_deg = 45.0f;
-
-    WriteTestProgram(&sineTemp, TestProgram);
-    
-
-    // Zero the device
-    
-    ConstantSpeed constantSpeed;
-    constantSpeed.Config.S0Speed_degps = 0.0f;
-    constantSpeed.Config.S1Speed_degps = 45.0f;
-    WriteTestProgram(&constantSpeed, TestProgram);
-    
-    constantSpeed.Config.S0Speed_degps = 0.0f;
-    constantSpeed.Config.S1Speed_degps = 10.0f;
-    WriteTestProgram(&constantSpeed, TestProgram);
-
-    */
-    ArchimedeanSpiral spiralTemp;
-    spiralTemp.Config.SpiralConstant_mprad = 0.001f;
-    spiralTemp.Config.SpiralRate_radps = 4.0f;
-    spiralTemp.Config.CenterX_m = 0.1f;
-    spiralTemp.Config.CenterY_m = 0.15f;
-    spiralTemp.Config.MaxRadius_m = 0.13f;
-    WriteTestProgram(&spiralTemp, TestProgram);
-
-    WaitGuidance waitTemp;
-    waitTemp.Config.timeout_ms = 5000; // 5 seconds
-    WriteTestProgram(&waitTemp, TestProgram);
-
-    spiralTemp.Config.CenterX_m = 0.0f;
-    WriteTestProgram(&spiralTemp, TestProgram);
-
-    WriteTestProgram(&waitTemp, TestProgram);
-    
     // Hardware initialization
 
     // Set pulse pins.  The safety component will handle the enable pins
@@ -101,17 +57,9 @@ void MotorControlStart() { xTaskCreate(MotorControlTask, TAG, 8000, NULL, 1, NUL
 
 void MotorControlTask(void *Parameters)
 {
-    // Wait for coms to establish, the print the test program
-    // TODO, move logging the CNC program to a separate task
+    // Wait for comms to establish
     vTaskDelay(pdMS_TO_TICKS(2000));
-    ESP_LOGI(TAG, "Packed stream (%d bytes):", TestProgram.size());
-    for (size_t i = 0; i < TestProgram.size(); i += 16)
-    {
-        size_t len = std::min((size_t)16, TestProgram.size() - i);
-        vTaskDelay(pdMS_TO_TICKS(1000)); // Wait for coms to init
-        ESP_LOG_BUFFER_HEX_LEVEL(TAG, &TestProgram[i], len, ESP_LOG_INFO);
-    }
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    ESP_LOGI(TAG, "CNC control ready; waiting for commands on queue");
 
     // 100hz motor control loop
     const int motorUpdatePeriod_Ticks = pdMS_TO_TICKS(MOTOR_CONTROL_PERIOD_MS);
@@ -130,7 +78,6 @@ void MotorControlTask(void *Parameters)
 
     // Program control
     bool instructionComplete = true;
-    size_t programIdex = 0;
     bool pumpThisMode = false;
     bool cmdViaAngle = false;
 
@@ -155,98 +102,106 @@ void MotorControlTask(void *Parameters)
         AngToCart(LocalS0Tlm.Position_deg, LocalS1Tlm.Position_deg, LocalS0Tlm.Speed_degps,
                   LocalS1Tlm.Speed_degps, Pos_m, Vel_mps);
 
-        // If ready for the next instruction
+        // If ready for the next instruction, check queue without blocking
         if (instructionComplete)
         {
-            // Process Instructions
-            if (CNCEnabled && programIdex >= TestProgram.size())
+            decoded_cmd_payload_t decoded{};
+            if (xQueueReceive(cmd_queue_cnc, &decoded, 0) == pdTRUE)
             {
-                ESP_LOGE(TAG, "End of program reached. programIdex: %d, ProgramSize: %d",
-                         programIdex, TestProgram.size());
-                StopCNC();
-                vTaskDelay(portMAX_DELAY); // Stop the task
-                continue;
-            }
+                ParsedMessag_t message{};
+                message.OpCode = decoded.opcode;
+                message.payloadLength = decoded.instruction_length;
+                if (message.payloadLength > sizeof(message.payload))
+                {
+                    ESP_LOGE(TAG, "Payload too large: %u", message.payloadLength);
+                }
+                else
+                {
+                    ESP_LOGI(TAG, "Configuring OpCode: 0x%02X", message.OpCode);
+                    memcpy(message.payload, decoded.instructions + 2, message.payloadLength);
+                    instructionComplete = false;
 
-            // Read the next OpCode
-            ParsedMessag_t message;
-            if (!ParseMessage(TestProgram.data(), programIdex, TestProgram.size(), message))
-            {
-                ESP_LOGE(TAG, "Failed to parse instruction at index %d", programIdex);
-                StopCNC();
-                vTaskDelay(portMAX_DELAY); // Stop the task
-                continue;                  // Skip to the next iteration
-            }
-            instructionComplete = false;
+                    switch (message.OpCode)
+                    {
+                        case CNC_SPIRAL_OPCODE:
+                            currentGuidance = &spiralGuidance;
+                            pumpThisMode = true;
+                            break;
+                        case CNC_JOG_OPCODE:
+                            // TODO
+                            break;
+                        case CNC_WAIT_OPCODE:
+                            currentGuidance = &waitGuidance;
+                            pumpThisMode = false;
+                            break;
+                        case CNC_SINE_OPCODE:
+                            currentGuidance = &sineGuidance;
+                            pumpThisMode = false;
+                            break;
+                        case CNC_CONSTANT_SPEED_OPCODE:
+                            currentGuidance = &constantSpeed;
+                            pumpThisMode = false;
+                            break;
+                        default:
+                            ESP_LOGE(TAG, "Unknown OpCode: 0x%02X", message.OpCode);
+                            instructionComplete = true;
+                            break;
+                    }
 
-            switch (message.OpCode)
-            {
-                case CNC_SPIRAL_OPCODE:
-                {
-                    currentGuidance = &spiralGuidance;
-                    pumpThisMode = true;
-                    break;
-                }
-                case CNC_JOG_OPCODE:
-                {
-                    // TODO
-                    break;
-                }
-                case CNC_WAIT_OPCODE:
-                {
-                    currentGuidance = &waitGuidance;
-                    pumpThisMode = false;
-                    break;
-                }
-                case CNC_SINE_OPCODE:
-                {
-                    currentGuidance = &sineGuidance;
-                    pumpThisMode = false;
-                    break;
-                }
-                case CNC_CONSTANT_SPEED_OPCODE:
-                {
-                    currentGuidance = &constantSpeed;
-                    pumpThisMode = false;
-                    break;
-                }
-                default:
-                {
-                    ESP_LOGE(TAG, "Unknown OpCode: 0x%02X", message.OpCode);
-                    StopCNC();
-                    vTaskDelay(portMAX_DELAY);
-                    continue;
+                    if (!instructionComplete && currentGuidance != nullptr)
+                    {
+                        if (!currentGuidance->ConfigureFromMessage(message))
+                        {
+                            ESP_LOGE(TAG, "Failed to configure guidance for opcode 0x%02X", message.OpCode);
+                            instructionComplete = true;
+                        }
+                        else
+                        {
+                            ESP_LOGI(TAG, "Starting OpCode: 0x%02X", message.OpCode);
+                        }
+                    }
                 }
             }
-
-            // Configure the guidance object
-            currentGuidance->ConfigureFromMessage(message);
-
-            ESP_LOGI(TAG, "OpCode: 0x%02X", message.OpCode);
         }
 
-        instructionComplete =
-            currentGuidance->GetTargetPosition(MOTOR_CONTROL_PERIOD_MS, Pos_m, Target_m,
-                                               cmdViaAngle, S0CmdSpeed_degps, S1CmdSpeed_degps);
+        if (!instructionComplete && currentGuidance != nullptr)
+        {
+            instructionComplete = currentGuidance->GetTargetPosition(
+                MOTOR_CONTROL_PERIOD_MS, Pos_m, Target_m, cmdViaAngle, S0CmdSpeed_degps, S1CmdSpeed_degps);
+        }
+        else
+        {
+            // Idle when no instruction is active
+            cmdViaAngle = true; // Command via angle so that we can specify zero speed
+            S0CmdSpeed_degps = 0.0f;
+            S1CmdSpeed_degps = 0.0f;
+            pumpSpeed_degps = 0.0f;
+            Target_m = Pos_m;
+        }
 
-        if (cmdViaAngle)
+        if (!instructionComplete && cmdViaAngle)
         {
             pumpSpeed_degps = 0.0;
             targetS0_deg = 0.0;
             targetS1_deg = 0.0;
         }
-        else
+        else if (!cmdViaAngle)
         {
             MathErrorCodes cartToAngRet = CartToAng(targetS0_deg, targetS1_deg, Target_m);
 
             if (cartToAngRet != E_OK)
             {
                 const char *reason = (cartToAngRet == E_UNREACHABLE_TOO_CLOSE) ? "close" : "far";
-                ESP_LOGE(TAG, "Unreachable target position %.2f X %.2f Y is too %s. Stopping",
+                ESP_LOGE(TAG, "Unreachable target position %.2f X %.2f Y is too %s. Idling",
                          Target_m.x, Target_m.y, reason);
-                StopCNC();
-                vTaskDelay(portMAX_DELAY);
-                continue;
+                // Abort current instruction and idle
+                instructionComplete = true;
+                cmdViaAngle = true;
+                currentGuidance = nullptr;
+                S0CmdSpeed_degps = 0.0f;
+                S1CmdSpeed_degps = 0.0f;
+                pumpSpeed_degps = 0.0f;
+                Target_m = Pos_m;
             }
 
             // Control motor speed using a simple proportional law
@@ -254,7 +209,7 @@ void MotorControlTask(void *Parameters)
             S1CmdSpeed_degps = (targetS1_deg - LocalS1Tlm.Position_deg) * kp_hz;
 
             // Control pump speed
-            pumpSpeed_degps = pumpThisMode && ((Target_m - Pos_m).magnitude() < posTol_m)
+            pumpSpeed_degps = (!instructionComplete && pumpThisMode && ((Target_m - Pos_m).magnitude() < posTol_m))
                                   ? Vel_mps.magnitude() * pumpConstant_degpm
                                   : 0.0;
         }

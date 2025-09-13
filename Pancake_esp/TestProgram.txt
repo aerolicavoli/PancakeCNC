@@ -1,0 +1,10 @@
+# Example CNC program
+#CNC_Spiral SpiralConstant_mprad=0.001,SpiralRate_radps=4.0,CenterX_m=0.1,CenterY_m=0.15,MaxRadius_m=0.13
+# Sending 1
+Wait timeout_ms=5000
+#CNC_Spiral SpiralConstant_mprad=0.001,SpiralRate_radps=4.0,CenterX_m=0.0,CenterY_m=0.15,MaxRadius_m=0.13
+E sending 2
+Wait timeout_ms=5000
+# sending 3
+Wait timeout_ms=5000
+

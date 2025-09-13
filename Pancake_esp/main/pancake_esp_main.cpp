@@ -1,8 +1,7 @@
-// #include "MotorControl.h"
 
-//#include "StepperMotor.h"
+#include "StepperMotor.h"
 #include "defines.h"
-//#include "MotorControl.h"
+#include "MotorControl.h"
 #include "WifiHandler.h"
 #include "InfluxDBCmdAndTlm.h"
 
@@ -27,7 +26,7 @@ extern "C"
        // PiUIInit();
         
         //  UIInit();
-        //MotorControlInit();
+        MotorControlInit();
         WifiInit();
         CmdAndTlmInit();
 
@@ -38,7 +37,7 @@ extern "C"
         // UIStart();
 
         // Energize the CNC last
-        //MotorControlStart(); 
-    
+        MotorControlStart(); 
+
     }
 }

@@ -4,7 +4,6 @@
 #define MOTOR_CONTROL_H
 
 #include <cstdint>
-#include <vector>
 
 #include "esp_system.h"
 #include "esp_log.h"

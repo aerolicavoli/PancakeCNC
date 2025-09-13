@@ -11,11 +11,11 @@
 #include <cstdint>
 #include <freertos/task.h>
 #include "DataModel.h"
-#define CMD_PAYLOAD_MAX_LEN 512
 
-
-
-extern QueueHandle_t cmd_queue;
+// Raw command queue (base64-encoded payloads)
+extern QueueHandle_t cmd_queue_fast_decode;
+// Decoded CNC command queue (opcode + payload bytes)
+extern QueueHandle_t cmd_queue_cnc;
 
 void CommandHandlerInit(void);
 void CommandHandlerStart(void);

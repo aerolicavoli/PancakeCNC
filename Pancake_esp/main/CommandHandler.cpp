@@ -1,105 +1,105 @@
 #include "CommandHandler.h"
 
-
 static const char *TAG = "CommandHandler";
-
-// Create two command queues (cmd_queue_fast and cmd_queue_cnc):
-// cmd_queue_fast_decode to handle decoding commands as soon as they come in.
-// These commands should never block execution. Available opcodes are:
-// * 0x69 (log message)
-// * 0x01 (emergency stop)
-// * 0x02 (resume operation)
-// * 0x03 (cnc command, passed to cmd_queue_cnc for later execution)
 
 QueueHandle_t cmd_queue_fast_decode;
 QueueHandle_t cmd_queue_cnc;
 
-void CommandHandlerInit(void) {
+static inline bool is_cnc_opcode(uint8_t op)
+{
+    // Match currently used CNC opcodes from SerialParser.h
+    // CNC_SPIRAL_OPCODE 0x11, CNC_JOG_OPCODE 0x12, CNC_WAIT_OPCODE 0x13,
+    // CNC_SINE_OPCODE 0x14, CNC_CONSTANT_SPEED_OPCODE 0x15
+    return (op >= 0x11 && op <= 0x15);
+}
+
+void CommandHandlerInit(void)
+{
     cmd_queue_fast_decode = xQueueCreate(5, sizeof(raw_cmd_payload_t));
     assert(cmd_queue_fast_decode != NULL);
-    cmd_queue_cnc = xQueueCreate(1, sizeof(decoded_cmd_payload_t));
+    cmd_queue_cnc = xQueueCreate(8, sizeof(decoded_cmd_payload_t));
     assert(cmd_queue_cnc != NULL);
 }
 
-static void handle_command(const decoded_cmd_payload_t &cmd) {
-    if (cmd.instruction_length < 2) {
-        ESP_LOGE(TAG, "Command too short");
+static void handle_command(const decoded_cmd_payload_t &cmd)
+{
+    // Expect at least opcode/len
+    if (cmd.instruction_length > CMD_PAYLOAD_MAX_LEN) {
+        ESP_LOGE(TAG, "Instruction length too large: %u", cmd.instruction_length);
         return;
     }
-    uint8_t payload_len = cmd.instructions_length;
-    if (payload_len > cmd.instruction_length    - 2) {
-        ESP_LOGE(TAG, "Invalid length byte");
+
+    if (is_cnc_opcode(cmd.opcode))
+    {
+        // Queue CNC instruction for later execution by MotorControl
+        if (xQueueSend(cmd_queue_cnc, &cmd, 0) != pdTRUE)
+        {
+            ESP_LOGW(TAG, "CNC queue full; dropping opcode 0x%02X", cmd.opcode);
+        }
         return;
     }
-    switch (cmd.opcode) {
-        case 0x69: {
+
+    switch (cmd.opcode)
+    {
+        case 0x69: // Echo (legacy)
+        {
             char msg[CMD_PAYLOAD_MAX_LEN];
-            size_t copy_len = payload_len < sizeof(msg) - 1 ? payload_len : sizeof(msg) - 1;
-            memcpy(msg, data + 2, copy_len);
+            size_t copy_len = cmd.instruction_length < sizeof(msg) - 1 ? cmd.instruction_length : sizeof(msg) - 1;
+            memcpy(msg, cmd.instructions + 2, copy_len);
             msg[copy_len] = '\0';
-            ESP_LOGI("CommandParser", "%s", msg);
+            ESP_LOGI(TAG, "%s", msg);
             break;
         }
-        case 0x01:
-        {
+        case 0x01: // Emergency Stop
             ESP_LOGW(TAG, "Emergency Stop Command Received");
-            // TODO, directly toggle motor enable pins
+            // TODO: Integrate with safety/motor disable
             break;
-        }
-        case 0x02:
-        {
+        case 0x02: // Resume
             ESP_LOGW(TAG, "Resume Operation Command Received");
-            // TODO, directly toggle motor enable pins
+            // TODO: Integrate with safety/motor enable
             break;
-        }
-        case 0x03:
-        {
-            ESP_LOGW(TAG, "CNC Command Received");
-            // Pass to CNC queue
-            cmd_payload_t item;
-            item.opcode = opcode;
-            item.payload_len = payload_len;
-            memcpy(item.payload, data + 2, payload_len);
-            xQueueSend(cmd_queue_cnc, &item, 0);
-            break;
-        }
         default:
-            ESP_LOGW(TAG, "Unknown opcode 0x%02X", opcode);
+            ESP_LOGW(TAG, "Unknown opcode 0x%02X", cmd.opcode);
             break;
     }
 }
 
-void CommandHandlerTask(void *param) {
+void CommandHandlerTask(void *param)
+{
     raw_cmd_payload_t item;
-    for (;;) {
-        if (xQueueReceive(cmd_queue_fast_decode, &item, portMAX_DELAY) == pdTRUE) 
+    for (;;)
+    {
+        if (xQueueReceive(cmd_queue_fast_decode, &item, portMAX_DELAY) == pdTRUE)
         {
-            decoded_cmd_payload_t decoded;
+            decoded_cmd_payload_t decoded{};
             decoded.timestamp = item.timestamp;
 
-            // Base64 decode
+            // Base64 decode (into instructions buffer)
             size_t out_len = 0;
-            if (mbedtls_base64_decode(decoded.instructions, sizeof(decoded.instructions), &out_len,
-                                      (const unsigned char *)item.payload,
-                                      strlen(item.payload)) != 0) {
-                ESP_LOGE(TAG, "Base64 decode failed");
+            int rc = mbedtls_base64_decode(decoded.instructions, sizeof(decoded.instructions), &out_len,
+                                            (const unsigned char *)item.payload,
+                                            strlen(item.payload));
+            if (rc != 0 || out_len < 2)
+            {
+                ESP_LOGE(TAG, "Base64 decode failed or too short (rc=%d, out_len=%u)", rc, (unsigned)out_len);
                 continue;
             }
 
-            // Unpack the command
             decoded.opcode = decoded.instructions[0];
-            decoded.instruction_length = decoded.instructions[1];   
-
-            if (decoded.instruction_length > out_len - 2) {
-                ESP_LOGE(TAG, "Invalid instruction length");
+            uint8_t payload_len = decoded.instructions[1];
+            if (payload_len > out_len - 2)
+            {
+                ESP_LOGE(TAG, "Invalid instruction length %u for buffer %u", payload_len, (unsigned)out_len);
                 continue;
             }
+            decoded.instruction_length = payload_len;
 
             handle_command(decoded);
         }
     }
 }
 
-void CommandHandlerStart(void) {
+void CommandHandlerStart(void)
+{
     xTaskCreate(CommandHandlerTask, "CmdHandler", 4096, NULL, 1, NULL);
 }

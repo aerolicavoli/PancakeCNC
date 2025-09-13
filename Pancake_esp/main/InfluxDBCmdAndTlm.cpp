@@ -1,7 +1,9 @@
 #include "InfluxDBCmdAndTlm.h"
 #include "InfluxDBParser.h"
 #include "CommandHandler.h"
+#include "DataModel.h"
 #include <cstring>
+#include <algorithm>
 
 static const char *TAG = "InfluxDBCmdAndTlm";
 
@@ -24,7 +26,7 @@ esp_http_client_handle_t TlmHttpClient = NULL;
 esp_http_client_handle_t CmdHttpClient = NULL;
 
 // Maximum size of the HTTP response buffer. Adjust as needed.
-#define MAX_HTTP_OUTPUT_BUFFER 512
+#define MAX_HTTP_OUTPUT_BUFFER 4096
 
 // Global variables for handling fragmented HTTP responses
 static char *output_buffer;  // Buffer to store HTTP response
@@ -73,32 +75,35 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt) {
             
             // Trigger parsing of the full response
             if (output_len > 0) {
-                InfluxDBCommand cmd;
-                if (parse_influxdb_command(output_buffer, cmd)) {
-                    if (cmd.timestamp > last_message_timestamp) {
-                        cmd_payload_t new_payload;
-                        memset(&new_payload, 0, sizeof(new_payload));
-                        new_payload.timestamp = cmd.timestamp;
-                        strncpy(new_payload.payload, cmd.payload.c_str(), sizeof(new_payload.payload) - 1);
-
-                        if (xQueueSend(cmd_queue, &new_payload, 0) != pdTRUE) {
-                            ESP_LOGE(TAG, "Failed to post command to queue.");
-                        } else {
-                            last_message_timestamp = cmd.timestamp;
-                            char time_str[50];
-                            format_time_string(last_message_timestamp, time_str, sizeof(time_str));
-                            ESP_LOGD(TAG, "Posted payload to queue. Time: %s, Payload: %s", time_str, new_payload.payload);
-                        }
-                    } else {
-                        char time_str[50];
-                        format_time_string(cmd.timestamp, time_str, sizeof(time_str));
-                        ESP_LOGD(TAG, "Ignoring old message. Time: %s", time_str);
-                    }
-                } else {
+                std::vector<InfluxDBCommand> cmds;
+                size_t n = parse_influxdb_command_list(output_buffer, cmds);
+                if (n == 0) {
                     if (strstr(output_buffer, ",_result,0,") == NULL) {
                         ESP_LOGD(TAG, "No command in response.");
                     } else {
                         ESP_LOGE(TAG, "Failed to parse InfluxDB response.");
+                    }
+                } else {
+                    // Process in chronological order
+                    std::sort(cmds.begin(), cmds.end(), [](const InfluxDBCommand &a, const InfluxDBCommand &b){
+                        return a.timestamp < b.timestamp;
+                    });
+                    for (const auto &cmd : cmds) {
+                        if (cmd.timestamp <= last_message_timestamp) {
+                            continue;
+                        }
+                        raw_cmd_payload_t new_payload{};
+                        new_payload.timestamp = cmd.timestamp;
+                        strncpy(new_payload.payload, cmd.payload.c_str(), sizeof(new_payload.payload) - 1);
+                        if (xQueueSend(cmd_queue_fast_decode, &new_payload, 0) == pdTRUE) {
+                            last_message_timestamp = cmd.timestamp;
+                            char time_str[50];
+                            format_time_string(last_message_timestamp, time_str, sizeof(time_str));
+                            ESP_LOGD(TAG, "Posted payload to decode queue. Time: %s, Payload: %s", time_str, new_payload.payload);
+                        } else {
+                            ESP_LOGE(TAG, "Failed to post command to decode queue.");
+                            break;
+                        }
                     }
                 }
             }
@@ -252,9 +257,12 @@ void QueryCmdTask(void *Parameters)
 
         // ESP_LOGW(TAG, "Looking for commands");
         char fluxQuery[256];
-        snprintf(fluxQuery, sizeof(fluxQuery), 
-            "from(bucket:\"%s\") |> range(start:-5m) |> filter(fn:(r)=> r._measurement==\"cmd\" and r._field==\"data\") |> last()", 
-            INFLUXDB_CMD_BUCKET);
+        // Query recent window and return all rows; device will de-dup by timestamp
+        int lookback_s = CMD_QUERY_LOOKBACK_MS / 1000;
+        if (lookback_s <= 0) lookback_s = 300; // default 5m
+        snprintf(fluxQuery, sizeof(fluxQuery),
+                 "from(bucket:\"%s\") |> range(start:-%ds) |> filter(fn:(r)=> r._measurement==\"cmd\" and r._field==\"data\")",
+                 INFLUXDB_CMD_BUCKET, lookback_s);
         esp_http_client_set_post_field(CmdHttpClient, fluxQuery, strlen(fluxQuery));
 
         // Perform the HTTP request
