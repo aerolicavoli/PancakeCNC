@@ -7,51 +7,51 @@ Source code, mechanical designs, and electrical schematics developed for the pur
 
 - [About the Project](#about-the-project)
 - [System Architecture](#system-architecture)
+  - [CNC Structure](#cnc-structure)
+  - [Controller Box](#controller-box)
 - [Generic Instruction Protocol](#generic-instruction-protocol)
-
----
+  - [Message Layout](#message-layout)
+  - [Opcodes](#opcodes)
+  - [Execution Rules](#execution-rules)
+  - [Example Payload](#example-payload)
 
 ## About the Project
 
-Pancake CNC was built to learn and expand my capabilities in system design, PCB design, low level code, kinematics, and control.
+Pancake CNC was built as a learning platform for system design, PCB design, low-level coding, kinematics, and control theory.
 
 ## System Architecture
 
-Many, but not all facets of this design are controlled in this repository.
+This repository contains many, but not all, aspects of the machine's design.
 
 ### CNC Structure
 
-The motors, gearing, hinge, and pump mechanisms.
+The CNC structure includes the motors, gearing, hinge, and pump mechanisms.
 
 #### Printed Parts
 
-Checked into this repository are the following components
+Files for the following peristaltic pump components are included:
 
-- Peristaltic pump components
-  - PumpBase.stl
-  - PumpTop.stl
-  - PumpSpinner.stl
-- Hinge Components
-  - (Not checked in) UpperHinge.stl
-  - (Not checked in) LowerHinge.stl
+- `PumpBase.stl`
+- `PumpTop.stl`
+- `PumpSpinner.stl`
+
+The hinge components (`UpperHinge.stl`, `LowerHinge.stl`) are not currently tracked in the repository.
 
 ### Controller Box
 
-The controller box houses the compute, motor driver, and user interface elements.
+The controller box houses the compute module, motor drivers, and user interface elements.
 
 #### ControllerPCB
 
-Houses an ESP32-s3, power conditioning, 5v level shifting, and general GPIO breakout.
+The ControllerPCB includes an ESP32-S3, power conditioning, 5 V level shifting, and general GPIO breakout.
 
 ## Generic Instruction Protocol
 
-The **Generic Instruction Protocol** defines how commands are encoded and transmitted to the CNC system.  
-
-Each message payload follows this structure:
-
----
+The **Generic Instruction Protocol** defines how commands are encoded and transmitted to the CNC system.
 
 ### Message Layout
+
+Each message payload has the following byte structure:
 
 | Byte Index | Field Name             | Size      | Description                                |
 |------------|------------------------|-----------|--------------------------------------------|
@@ -59,13 +59,7 @@ Each message payload follows this structure:
 | `[1]`      | **Instruction Length** | 1 byte    | Number of bytes in the instruction payload |
 | `[2..n+1]` | **Instruction Data**   | *n* bytes | Instruction payload                        |
 
-Message Layout:
-[0] : Op Code (identifies the instruction type)
-[1] : Length of the instruction payload (n)
-[2..] : Instruction data (n bytes)
-
-
----
+Indices are zero-based.
 
 ### Opcodes
 
@@ -78,8 +72,6 @@ Message Layout:
 | `0x05`  | CNC Jog Command          |
 | `0x06`–`0x44` | **Reserved / Unused** |
 | `0x45`  | Echo Payload             |
-
----
 
 ### Execution Rules
 
@@ -94,9 +86,7 @@ Message Layout:
   All other opcodes are pushed onto the **CNC Command Queue**.  
   - The queue ensures **sequential execution**: only one instruction is active at a time.  
   - A new instruction will not begin until the previous one has fully completed (e.g., CNC finishes its motion).  
-  - This guarantees **deterministic command flow** and prevents overlapping motions.  
-
----
+  - This guarantees **deterministic command flow** and prevents overlapping motions.
 
 ### Example Payload
 
