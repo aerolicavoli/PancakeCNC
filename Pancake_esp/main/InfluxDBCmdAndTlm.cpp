@@ -1,4 +1,7 @@
 #include "InfluxDBCmdAndTlm.h"
+#include "InfluxDBParser.h"
+#include "CommandHandler.h"
+#include <cstring>
 
 static const char *TAG = "InfluxDBCmdAndTlm";
 
@@ -20,6 +23,97 @@ static TaskHandle_t QueryCmdsTaskHandle = NULL;
 esp_http_client_handle_t TlmHttpClient = NULL;
 esp_http_client_handle_t CmdHttpClient = NULL;
 
+// Maximum size of the HTTP response buffer. Adjust as needed.
+#define MAX_HTTP_OUTPUT_BUFFER 512
+
+// Global variables for handling fragmented HTTP responses
+static char *output_buffer;  // Buffer to store HTTP response
+static int output_len;       // Length of the stored response
+
+// Variable to track the timestamp of the last received message
+time_t last_message_timestamp = 0;
+
+// Helper function to format time for logging
+void format_time_string(time_t raw_time, char *buffer, size_t buffer_size) {
+    struct tm timeinfo;
+    localtime_r(&raw_time, &timeinfo);
+    strftime(buffer, buffer_size, "%Y-%m-%d %H:%M:%S", &timeinfo);
+}
+
+// Function to handle HTTP events and process data
+esp_err_t _http_event_handler(esp_http_client_event_t *evt) {
+    switch(evt->event_id) {
+        case HTTP_EVENT_ERROR:
+            ESP_LOGE(TAG, "HTTP_EVENT_ERROR");
+            break;
+        case HTTP_EVENT_ON_CONNECTED:
+            ESP_LOGD(TAG, "HTTP_EVENT_ON_CONNECTED");
+            break;
+        case HTTP_EVENT_HEADER_SENT:
+            ESP_LOGD(TAG, "HTTP_EVENT_HEADER_SENT");
+            break;
+        case HTTP_EVENT_ON_HEADER:
+            ESP_LOGD(TAG, "HTTP_EVENT_ON_HEADER, key=%s, value=%s", evt->header_key, evt->header_value);
+            break;
+        case HTTP_EVENT_ON_DATA:
+            ESP_LOGD(TAG, "HTTP_EVENT_ON_DATA, %d bytes received:", evt->data_len);
+            // Append incoming data chunks to the output buffer
+            if (output_len + evt->data_len < MAX_HTTP_OUTPUT_BUFFER) {
+                memcpy(output_buffer + output_len, evt->data, evt->data_len);
+                output_len += evt->data_len;
+            } else {
+                ESP_LOGE(TAG, "Output buffer overflow.");
+            }
+            break;
+        case HTTP_EVENT_ON_FINISH:
+            ESP_LOGD(TAG, "HTTP_EVENT_ON_FINISH");
+            // Null-terminate the buffer
+            output_buffer[output_len] = '\0';
+            ESP_LOGD(TAG, "Full response received:\n%s", output_buffer);
+            
+            // Trigger parsing of the full response
+            if (output_len > 0) {
+                InfluxDBCommand cmd;
+                if (parse_influxdb_command(output_buffer, cmd)) {
+                    if (cmd.timestamp > last_message_timestamp) {
+                        cmd_payload_t new_payload;
+                        memset(&new_payload, 0, sizeof(new_payload));
+                        new_payload.timestamp = cmd.timestamp;
+                        strncpy(new_payload.payload, cmd.payload.c_str(), sizeof(new_payload.payload) - 1);
+
+                        if (xQueueSend(cmd_queue, &new_payload, 0) != pdTRUE) {
+                            ESP_LOGE(TAG, "Failed to post command to queue.");
+                        } else {
+                            last_message_timestamp = cmd.timestamp;
+                            char time_str[50];
+                            format_time_string(last_message_timestamp, time_str, sizeof(time_str));
+                            ESP_LOGD(TAG, "Posted payload to queue. Time: %s, Payload: %s", time_str, new_payload.payload);
+                        }
+                    } else {
+                        char time_str[50];
+                        format_time_string(cmd.timestamp, time_str, sizeof(time_str));
+                        ESP_LOGD(TAG, "Ignoring old message. Time: %s", time_str);
+                    }
+                } else {
+                    if (strstr(output_buffer, ",_result,0,") == NULL) {
+                        ESP_LOGD(TAG, "No command in response.");
+                    } else {
+                        ESP_LOGE(TAG, "Failed to parse InfluxDB response.");
+                    }
+                }
+            }
+            break;
+        case HTTP_EVENT_DISCONNECTED:
+            ESP_LOGD(TAG, "HTTP_EVENT_DISCONNECTED");
+            break;
+        case HTTP_EVENT_REDIRECT:
+            ESP_LOGD(TAG, "HTTP_EVENT_REDIRECT");
+            break;
+    }
+    return ESP_OK;
+}
+
+
 static int InfluxVprintf(const char *str, va_list args)
 {
     char logBuffer[256];
@@ -29,7 +123,7 @@ static int InfluxVprintf(const char *str, va_list args)
         size_t payloadLength = (len < sizeof(logBuffer)) ? len : sizeof(logBuffer) - 1;
 
         AddLogToBuffer(logBuffer);
-        SendProtocolMessage(MSG_TYPE_LOG, (uint8_t *)logBuffer, payloadLength);
+//        (void)SendProtocolMessage(MSG_TYPE_LOG, (uint8_t *)logBuffer, payloadLength);
     }
     return len;
 }
@@ -93,6 +187,7 @@ void CmdAndTlmInit(void)
 {
     TlmBufferMutex = xSemaphoreCreateMutex();
     assert(TlmBufferMutex != nullptr);
+    CommandHandlerInit();
 }
 
 void CmdAndTlmStart(void)
@@ -101,45 +196,79 @@ void CmdAndTlmStart(void)
     xTaskCreate(TransmitTlmTask, "TlmTransmit", 8192, NULL, 1, &TransmitTlmTaskHandle);
     xTaskCreate(AggregateTlmTask, "TlmAggregate", 8192, NULL, 1, &AggregateTlmTaskHandle);
     xTaskCreate(QueryCmdTask, "CmdQuery", 8192, NULL, 1, &QueryCmdsTaskHandle);
+    CommandHandlerStart();
 }
 
 void QueryCmdTask(void *Parameters)
 {
+    output_buffer = (char *)malloc(MAX_HTTP_OUTPUT_BUFFER);
+    if (!output_buffer) {
+        ESP_LOGE(TAG, "Failed to allocate memory for HTTP output buffer");
+        vTaskDelete(NULL);
+        return;
+    }
+    memset(output_buffer, 0, MAX_HTTP_OUTPUT_BUFFER);
+
     for (;;)
     {   
+        vTaskDelay(pdMS_TO_TICKS(TRANSMITPERIOD_MS));
+
         // Create a new HTTP client if needed
         if (CmdHttpClient == NULL)
         {
             char url[512];
-            snprintf(url, sizeof(url), "%s?bucket=%s&precision=ms", INFLUXDB_URL, INFLUXDB_CMD_BUCKET);
+            // INFLUXDB_URL should be like "https://host:8086"
+            snprintf(url, sizeof(url), "%s/api/v2/query?org=%s", INFLUXDB_URL, INFLUXDB_ORG);
 
             esp_http_client_config_t httpConfig = {
                 .url = url,
                 .method = HTTP_METHOD_POST,
-                .skip_cert_common_name_check = true,
+                .timeout_ms = 10000,
+                .event_handler = _http_event_handler,
+                .skip_cert_common_name_check = true, 
             };
-
             CmdHttpClient = esp_http_client_init(&httpConfig);
 
-            char authHeader[128];
+            char authHeader[160];
             snprintf(authHeader, sizeof(authHeader), "Token %s", INFLUXDB_TOKEN);
             esp_http_client_set_header(CmdHttpClient, "Authorization", authHeader);
-            esp_http_client_set_header(CmdHttpClient, "Content-Type", "text/plain");
+            esp_http_client_set_header(CmdHttpClient, "Content-Type", "application/vnd.flux");
+            // Optional: choose response format
+            esp_http_client_set_header(CmdHttpClient, "Accept-Encoding", "identity");
+            esp_http_client_set_header(CmdHttpClient, "Accept", "application/csv");
+
         }
 
         // Attempt to query commands
-        if (xSemaphoreTake(WifiAvailableSemaphore, pdMS_TO_TICKS(100)) == pdTRUE)
+        if (false) //xSemaphoreTake(WifiAvailableSemaphore, pdMS_TO_TICKS(100)) != pdTRUE)
         {
-            // TODO
-        }
-        else if (CmdHttpClient)
-        {
-            esp_http_client_cleanup(CmdHttpClient);
-            CmdHttpClient = NULL;
+            if (CmdHttpClient)
+            {
+                esp_http_client_cleanup(CmdHttpClient);
+                CmdHttpClient = NULL;
+            }
+            continue;
         }
 
-        
-        vTaskDelay(pdMS_TO_TICKS(TRANSMITPERIOD_MS));
+        // ESP_LOGW(TAG, "Looking for commands");
+        char fluxQuery[256];
+        snprintf(fluxQuery, sizeof(fluxQuery), 
+            "from(bucket:\"%s\") |> range(start:-5m) |> filter(fn:(r)=> r._measurement==\"cmd\" and r._field==\"data\") |> last()", 
+            INFLUXDB_CMD_BUCKET);
+        esp_http_client_set_post_field(CmdHttpClient, fluxQuery, strlen(fluxQuery));
+
+        // Perform the HTTP request
+        // Reset buffer before each new request
+        memset(output_buffer, 0, MAX_HTTP_OUTPUT_BUFFER);
+        output_len = 0;
+        esp_err_t err = esp_http_client_perform(CmdHttpClient);
+        if (err == ESP_OK) {
+            ESP_LOGD(TAG, "HTTP POST Status = %d, content_length = %d",
+                    esp_http_client_get_status_code(CmdHttpClient),
+                    (int)esp_http_client_get_content_length(CmdHttpClient));
+        } else {
+            ESP_LOGE(TAG, "HTTP POST request failed: %s", esp_err_to_name(err));
+        }
     }
 }
 
@@ -151,7 +280,7 @@ void TransmitTlmTask(void *Parameters)
         if (WorkingTlmBufferIdx > 0)
         {
             // Suspend logging over WiFi
-            EnableLoggingOverUART();
+            esp_log_set_vprintf(vprintf);
 
             // Take the buffer mutex and copy to transmit buffer
             xSemaphoreTake(TlmBufferMutex, portMAX_DELAY);
@@ -165,7 +294,7 @@ void TransmitTlmTask(void *Parameters)
         if (TlmHttpClient == NULL)
         {
             char url[512];
-            snprintf(url, sizeof(url), "%s?bucket=%s&precision=ms", INFLUXDB_URL, INFLUXDB_TLM_BUCKET);
+            snprintf(url, sizeof(url), "%s/api/v2/write?bucket=%s&precision=ms", INFLUXDB_URL, INFLUXDB_TLM_BUCKET);
 
             esp_http_client_config_t httpConfig = {
                 .url = url,
@@ -182,7 +311,7 @@ void TransmitTlmTask(void *Parameters)
         }
 
         // Attempt to send the telemetry data
-        if (xSemaphoreTake(WifiAvailableSemaphore, pdMS_TO_TICKS(100)) == pdTRUE)
+        if (true) //xSemaphoreTake(WifiAvailableSemaphore, pdMS_TO_TICKS(100)) == pdTRUE)
         {
             SendDataToInflux(TransmitTlmBuffer, TransmitTlmBufferIdx);
         }
@@ -193,7 +322,7 @@ void TransmitTlmTask(void *Parameters)
         }
 
         // Restart logging over WiFi
-        esp_log_set_vprintf(InfluxVprintf);
+        //esp_log_set_vprintf(InfluxVprintf);
         
         vTaskDelay(pdMS_TO_TICKS(TRANSMITPERIOD_MS));
     }
@@ -255,6 +384,7 @@ void AggregateTlmTask(void *Parameters)
 
 void SendDataToInflux(const char *Data, size_t Length)
 {
+    //ESP_LOGW(TAG, "Attempting to send data");
 
     esp_http_client_set_post_field(TlmHttpClient, Data, Length);
 

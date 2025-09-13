@@ -7,7 +7,7 @@
 // Task timing
 #define MOTOR_CONTROL_PERIOD_MS 10
 #define SAFETY_PERIOD_MS 10
-#define BUFFER_ADD_PERIOD_MS 600
+#define BUFFER_ADD_PERIOD_MS 3000
 
 
 #define CUSTOM_ERROR_CHECK(err)                                                                    \

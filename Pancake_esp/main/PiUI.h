@@ -75,7 +75,7 @@ extern "C"
     void PiUIInit();
     void PiUIStart();
     void SerialCommunicationTask(void *pvParameters);
-    void SendProtocolMessage(uint8_t MessageType, const uint8_t *Payload, size_t PayloadLength);
+    esp_err_t SendProtocolMessage(uint8_t MessageType, const uint8_t *Payload, size_t PayloadLength);
     bool ParseTheMessage(const uint8_t *Data, size_t Length, parsed_message_t *Message);
     void RouteMessage(const parsed_message_t *Message);
     void telemetry_provider_handle_request();

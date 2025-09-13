@@ -1,5 +1,8 @@
 Pancake_esp/build
 Pancake_esp/managed_components
+*Secret*
+*.bkp
+*-bak
 *.old
 *.zip
 *.log
