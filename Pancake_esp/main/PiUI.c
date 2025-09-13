@@ -46,7 +46,7 @@ void PiUIInit()
     ESP_LOGI(TAG, "UART Initialized");
 
     // Create the command queue
-    CNCCommandQueue = xQueueCreate(CNC_COMMAND_QUEUE_LENGTH, sizeof(motor_command_t));
+    CNCCommandQueue = xQueueCreate(CNC_COMMAND_QUEUE_LENGTH, sizeof(cmd_payload_t));
     if (CNCCommandQueue == NULL)
     {
         // Handle error: Failed to create queue

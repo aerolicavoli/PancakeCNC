@@ -4,13 +4,16 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <time.h>
-
+#include "esp_log.h"
+#include "mbedtls/base64.h"
+#include <cstring>
+#include <cassert>
+#include <cstdint>
+#include <freertos/task.h>
+#include "DataModel.h"
 #define CMD_PAYLOAD_MAX_LEN 512
 
-typedef struct {
-    time_t timestamp;
-    char payload[CMD_PAYLOAD_MAX_LEN];
-} cmd_payload_t;
+
 
 extern QueueHandle_t cmd_queue;
 
