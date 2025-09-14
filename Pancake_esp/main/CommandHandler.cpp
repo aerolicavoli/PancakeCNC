@@ -4,13 +4,15 @@ static const char *TAG = "CommandHandler";
 
 QueueHandle_t cmd_queue_fast_decode;
 QueueHandle_t cmd_queue_cnc;
+QueueHandle_t cmd_queue_now;
 
 static inline bool is_cnc_opcode(uint8_t op)
 {
     // Match currently used CNC opcodes from SerialParser.h
     // CNC_SPIRAL_OPCODE 0x11, CNC_JOG_OPCODE 0x12, CNC_WAIT_OPCODE 0x13,
     // CNC_SINE_OPCODE 0x14, CNC_CONSTANT_SPEED_OPCODE 0x15
-    return (op >= 0x11 && op <= 0x15);
+    // plus config opcodes 0x16, 0x17 which should enter the CNC queue too
+    return (op >= 0x11 && op <= 0x17);
 }
 
 void CommandHandlerInit(void)
@@ -19,6 +21,8 @@ void CommandHandlerInit(void)
     assert(cmd_queue_fast_decode != NULL);
     cmd_queue_cnc = xQueueCreate(8, sizeof(decoded_cmd_payload_t));
     assert(cmd_queue_cnc != NULL);
+    cmd_queue_now = xQueueCreate(4, sizeof(uint8_t));
+    assert(cmd_queue_now != NULL);
 }
 
 static void handle_command(const decoded_cmd_payload_t &cmd)
@@ -50,14 +54,27 @@ static void handle_command(const decoded_cmd_payload_t &cmd)
             ESP_LOGI(TAG, "%s", msg);
             break;
         }
-        case 0x01: // Emergency Stop
-            ESP_LOGW(TAG, "Emergency Stop Command Received");
-            // TODO: Integrate with safety/motor disable
+        case 0x01: // Pause
+        {
+            ESP_LOGW(TAG, "Pause Command Received");
+            uint8_t code = 0x01;
+            (void)xQueueSend(cmd_queue_now, &code, 0);
             break;
+        }
         case 0x02: // Resume
+        {
             ESP_LOGW(TAG, "Resume Operation Command Received");
-            // TODO: Integrate with safety/motor enable
+            uint8_t code = 0x02;
+            (void)xQueueSend(cmd_queue_now, &code, 0);
             break;
+        }
+        case 0x03: // Stop (clear queue + idle)
+        {
+            ESP_LOGW(TAG, "Stop Command Received");
+            uint8_t code = 0x03;
+            (void)xQueueSend(cmd_queue_now, &code, 0);
+            break;
+        }
         default:
             ESP_LOGW(TAG, "Unknown opcode 0x%02X", cmd.opcode);
             break;

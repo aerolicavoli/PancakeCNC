@@ -19,6 +19,9 @@
 #define CNC_WAIT_OPCODE 0x13
 #define CNC_SINE_OPCODE 0x14
 #define CNC_CONSTANT_SPEED_OPCODE 0x15
+// Config opcodes
+#define CNC_CONFIG_MOTOR_LIMITS_OPCODE 0x16
+#define CNC_CONFIG_PUMP_CONSTANT_OPCODE 0x17
 typedef struct
 {
     uint8_t OpCode;

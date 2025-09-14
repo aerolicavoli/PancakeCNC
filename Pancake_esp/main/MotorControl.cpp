@@ -13,6 +13,7 @@ Vector2D Vel_mps{0.0f, 0.0f};
 Vector2D Target_m{0.0f, 0.0f};
 
 bool CNCEnabled = false;
+static bool EStopActive = false;
 
 // CNC instructions now arrive via cmd_queue_cnc (decoded_cmd_payload_t)
 
@@ -66,7 +67,7 @@ void MotorControlTask(void *Parameters)
 
     // Control parms
     const float kp_hz(1.0e+0);
-    const float pumpConstant_degpm(1.0e5);
+    static float pumpConstant_degpm = 1.0e5f;
     const float posTol_m(1.0e-1);
 
     // Working variables
@@ -93,6 +94,40 @@ void MotorControlTask(void *Parameters)
     CNCEnabled = true;
     for (;;)
     {
+        // Handle immediate control commands (Pause / Resume / Stop)
+        uint8_t now_code;
+        if (xQueueReceive(cmd_queue_now, &now_code, 0) == pdTRUE)
+        {
+            if (now_code == 0x01)
+            {
+                EStopActive = true;
+                ESP_LOGW(TAG, "Pause ACTIVE");
+            }
+            else if (now_code == 0x02)
+            {
+                EStopActive = false;
+                ESP_LOGW(TAG, "Pause CLEARED");
+            }
+            else if (now_code == 0x03)
+            {
+                // Full stop: clear CNC queue and idle
+                EStopActive = false;
+                instructionComplete = true;
+                currentGuidance = nullptr;
+                cmdViaAngle = true;
+                S0CmdSpeed_degps = 0.0f;
+                S1CmdSpeed_degps = 0.0f;
+                pumpSpeed_degps = 0.0f;
+                Target_m = Pos_m;
+                // Drain CNC queue
+                decoded_cmd_payload_t tmp;
+                int drained = 0;
+                while (xQueueReceive(cmd_queue_cnc, &tmp, 0) == pdTRUE) {
+                    drained++;
+                }
+                ESP_LOGW(TAG, "Stop: cleared %d queued commands", drained);
+            }
+        }
         // Copy local tlm
         PumpMotor.GetTlm(&LocalPumpTlm);
         S0Motor.GetTlm(&LocalS0Tlm);
@@ -102,8 +137,54 @@ void MotorControlTask(void *Parameters)
         AngToCart(LocalS0Tlm.Position_deg, LocalS1Tlm.Position_deg, LocalS0Tlm.Speed_degps,
                   LocalS1Tlm.Speed_degps, Pos_m, Vel_mps);
 
+        // Apply any pending configuration commands (non-blocking)
+        if (!EStopActive)
+        {
+            decoded_cmd_payload_t peeked{};
+            while (xQueuePeek(cmd_queue_cnc, &peeked, 0) == pdTRUE)
+            {
+                if (peeked.opcode == CNC_CONFIG_MOTOR_LIMITS_OPCODE)
+                {
+                    decoded_cmd_payload_t cfg;
+                    xQueueReceive(cmd_queue_cnc, &cfg, 0);
+                    if (cfg.instruction_length >= 1 + sizeof(float) * 2)
+                    {
+                        uint8_t motor_id = cfg.instructions[2];
+                        float accel, speed;
+                        memcpy(&accel, &cfg.instructions[3], sizeof(float));
+                        memcpy(&speed, &cfg.instructions[7], sizeof(float));
+
+                        auto apply_limits = [&](StepperMotor &m) {
+                            m.SetAccelLimit(accel);
+                            m.SetSpeedLimit(speed);
+                        };
+                        if (motor_id == 0 || motor_id == 255) apply_limits(S0Motor);
+                        if (motor_id == 1 || motor_id == 255) apply_limits(S1Motor);
+                        if (motor_id == 2 || motor_id == 255) apply_limits(PumpMotor);
+                        ESP_LOGI(TAG, "Applied motor limits: id=%u accel=%.3f speed=%.3f", motor_id, accel, speed);
+                    }
+                }
+                else if (peeked.opcode == CNC_CONFIG_PUMP_CONSTANT_OPCODE)
+                {
+                    decoded_cmd_payload_t cfg;
+                    xQueueReceive(cmd_queue_cnc, &cfg, 0);
+                    if (cfg.instruction_length >= sizeof(float))
+                    {
+                        float k;
+                        memcpy(&k, &cfg.instructions[2], sizeof(float));
+                        pumpConstant_degpm = k;
+                        ESP_LOGI(TAG, "Applied pumpConstant_degpm=%.3f", pumpConstant_degpm);
+                    }
+                }
+                else
+                {
+                    break; // next item is guidance or unknown; leave it
+                }
+            }
+        }
+
         // If ready for the next instruction, check queue without blocking
-        if (instructionComplete)
+        if (instructionComplete && !EStopActive)
         {
             decoded_cmd_payload_t decoded{};
             if (xQueueReceive(cmd_queue_cnc, &decoded, 0) == pdTRUE)
@@ -164,14 +245,14 @@ void MotorControlTask(void *Parameters)
             }
         }
 
-        if (!instructionComplete && currentGuidance != nullptr)
+        if (!EStopActive && !instructionComplete && currentGuidance != nullptr)
         {
             instructionComplete = currentGuidance->GetTargetPosition(
                 MOTOR_CONTROL_PERIOD_MS, Pos_m, Target_m, cmdViaAngle, S0CmdSpeed_degps, S1CmdSpeed_degps);
         }
         else
         {
-            // Idle when no instruction is active
+            // Idle when no instruction is active or E-Stop engaged
             cmdViaAngle = true; // Command via angle so that we can specify zero speed
             S0CmdSpeed_degps = 0.0f;
             S1CmdSpeed_degps = 0.0f;
@@ -179,7 +260,7 @@ void MotorControlTask(void *Parameters)
             Target_m = Pos_m;
         }
 
-        if (!instructionComplete && cmdViaAngle)
+        if (!instructionComplete && !EStopActive && cmdViaAngle)
         {
             pumpSpeed_degps = 0.0;
             targetS0_deg = 0.0;
@@ -209,7 +290,7 @@ void MotorControlTask(void *Parameters)
             S1CmdSpeed_degps = (targetS1_deg - LocalS1Tlm.Position_deg) * kp_hz;
 
             // Control pump speed
-            pumpSpeed_degps = (!instructionComplete && pumpThisMode && ((Target_m - Pos_m).magnitude() < posTol_m))
+            pumpSpeed_degps = (!EStopActive && !instructionComplete && pumpThisMode && ((Target_m - Pos_m).magnitude() < posTol_m))
                                   ? Vel_mps.magnitude() * pumpConstant_degpm
                                   : 0.0;
         }

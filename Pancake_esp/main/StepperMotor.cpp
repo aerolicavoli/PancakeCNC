@@ -60,7 +60,8 @@ void StepperMotor::InitializeTimers(uint32_t MotorControlPeriod_ms)
     CUSTOM_ERROR_CHECK(gptimer_enable(m_PulseTimer));
     // Set speed SpeedIncrement_hz based on acceleration
 
-    m_SpeedIncrement_hz = (m_AccelLimit_degps2 / m_StepSize_deg * MotorControlPeriod_ms / 1000.0);
+    m_ControlPeriod_ms = MotorControlPeriod_ms;
+    m_SpeedIncrement_hz = (m_AccelLimit_degps2 / m_StepSize_deg * m_ControlPeriod_ms / 1000.0);
 
     float localSpeedIncrement_hz = m_SpeedIncrement_hz;
     ESP_LOGI(name, "Acceleration: %f degps2 | Speed Increment: %f hz", m_AccelLimit_degps2,
@@ -145,6 +146,18 @@ void StepperMotor::GetTlm(motor_tlm_t *Tlm)
     Tlm->Position_deg = steps * m_StepSize_deg + m_AngleOffset_deg;
     Tlm->Speed_degps = m_CurrentSpeed_degps;
 }
+
+void StepperMotor::SetAccelLimit(float AccelLimit_degps2)
+{
+    m_AccelLimit_degps2 = AccelLimit_degps2;
+    m_SpeedIncrement_hz = (m_AccelLimit_degps2 / m_StepSize_deg * m_ControlPeriod_ms / 1000.0);
+}
+
+float StepperMotor::GetAccelLimit() const { return m_AccelLimit_degps2; }
+
+void StepperMotor::SetSpeedLimit(float SpeedLimit_degps) { m_SpeedLimit_degps = SpeedLimit_degps; }
+
+float StepperMotor::GetSpeedLimit() const { return m_SpeedLimit_degps; }
 
 // Update the motor pulse freq
 void StepperMotor::UpdateSpeed(bool ForceUpdate)

@@ -9,13 +9,16 @@ This firmware consumes commands from an InfluxDB “command” bucket. Commands 
 ### Opcodes (firmware)
 
 - 0x69: Echo (E <message>)
-- 0x01: Emergency Stop (immediate)
+- 0x01: Pause (immediate)
 - 0x02: Resume (immediate)
+- 0x03: Stop (immediate; clears CNC queue)
 - 0x11: CNC_Spiral
 - 0x12: CNC_Jog (reserved)
 - 0x13: Wait
 - 0x14: CNC_Sine
 - 0x15: CNC_ConstantSpeed
+ - 0x16: SetMotorLimits (motor limits for S0/S1/Pump)
+ - 0x17: SetPumpConstant (pumpConstant_degpm)
 
 Payloads are little-endian C structs matching the guidance configs (see headers under `main/`).
 
@@ -28,7 +31,12 @@ The included `CommandTerminal.py` sends commands using a simplified syntax:
 - `Wait timeout_ms=500`
 - `CNC_Sine Amplitude_deg=10 Frequency_hz=0.25`
 - `CNC_ConstantSpeed S0Speed_degps=0 S1Speed_degps=45`
+- `Pause` (immediate)
+- `Resume` (clear stop and continue)
+- `Stop` (immediate; clears queued CNC commands)
 - `run_file TestProgram.txt` (newline-delimited commands)
+ - `SetMotorLimits motor=<S0|S1|Pump|All> accel=<degps2> speed=<degps>`
+ - `SetPumpConstant pumpConstant_degpm=<val>`
 
 Notes:
 

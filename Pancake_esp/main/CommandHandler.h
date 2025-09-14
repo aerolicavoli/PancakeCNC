@@ -16,6 +16,8 @@
 extern QueueHandle_t cmd_queue_fast_decode;
 // Decoded CNC command queue (opcode + payload bytes)
 extern QueueHandle_t cmd_queue_cnc;
+// Immediate control command queue (e-stop/resume)
+extern QueueHandle_t cmd_queue_now;
 
 void CommandHandlerInit(void);
 void CommandHandlerStart(void);

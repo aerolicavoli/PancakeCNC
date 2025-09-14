@@ -46,6 +46,12 @@ class StepperMotor
 
     void GetTlm(motor_tlm_t *Tlm);
 
+    // Runtime configuration
+    void SetAccelLimit(float AccelLimit_degps2);
+    float GetAccelLimit() const;
+    void SetSpeedLimit(float SpeedLimit_degps);
+    float GetSpeedLimit() const;
+
   private:
     void EnforceDirectionalInhibit(void);
 
@@ -67,6 +73,7 @@ class StepperMotor
     float m_SpeedLimit_degps;
     float m_StepSize_deg;
     float m_AngleOffset_deg;
+    float m_ControlPeriod_ms;
 
     // GPTimer handle for the step timer
     gptimer_handle_t m_PulseTimer;
