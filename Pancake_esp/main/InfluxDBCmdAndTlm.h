@@ -18,8 +18,8 @@
 #include <string.h>
 
 // Telemetry buffer settings
-#define BUFFER_SIZE 2000
-#define WARN_BUFFER_SIZE 1500
+#define BUFFER_SIZE 6000
+#define WARN_BUFFER_SIZE 5500
 #define TRANSMITPERIOD_MS 900
 #define CMD_QUERY_LOOKBACK_MS 10000
 

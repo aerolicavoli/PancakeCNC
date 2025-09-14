@@ -204,7 +204,9 @@ void StepperMotor::UpdateSpeed(bool ForceUpdate)
     if (m_CurrentSpeed_degps != 0.0)
     {
         float absSpeed_hz = fabs(m_CurrentSpeed_degps) / m_StepSize_deg;
-        uint64_t alarm_count = static_cast<uint64_t>(TIMER_PRECISION / (absSpeed_hz * 2.0));
+        // Ensure a minimum of 1 tick between toggles
+        double ticks_d = (double)TIMER_PRECISION / (absSpeed_hz * 2.0);
+        uint64_t alarm_count = (ticks_d < 1.0) ? 1 : static_cast<uint64_t>(ticks_d);
 
         gptimer_alarm_config_t alarm_config = {};
         alarm_config.alarm_count = alarm_count;

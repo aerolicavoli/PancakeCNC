@@ -71,7 +71,7 @@ void MotorControlTask(void *Parameters)
     // Control parms
     const float kp_hz(1.0e+0);
     static float pumpConstant_degpm = 1.0e5f;
-    const float posTol_m(1.0e-1);
+    const float posTol_m(1.0);
 
     // Working variables
     float targetS0_deg, targetS1_deg;
@@ -321,12 +321,12 @@ void MotorControlTask(void *Parameters)
             }
             // Control motor speed by assuming a constant deceleration. 
             // Solve the quadratic to find the max speed that can be decelerated
-            // over the given angle
+            // over the given angle. Use a fraction (0.01) of what the motors can achieve
             float S0AngleToGo_deg = (targetS0_deg - LocalS0Tlm.Position_deg);
-            S0CmdSpeed_degps = S0Motor.GetAccelLimit() * Sign(S0AngleToGo_deg) * sqrt(2.0 * fabs(S0AngleToGo_deg) / S0Motor.GetAccelLimit());
+            S0CmdSpeed_degps = 0.01 * S0Motor.GetAccelLimit() * Sign(S0AngleToGo_deg) * sqrt(2.0 * fabs(S0AngleToGo_deg) / (S0Motor.GetAccelLimit() * 0.01));
 
             float S1AngleToGo_deg = (targetS1_deg - LocalS1Tlm.Position_deg);
-            S1CmdSpeed_degps = S1Motor.GetAccelLimit() * Sign(S1AngleToGo_deg) * sqrt(2.0 * fabs(S1AngleToGo_deg) / S1Motor.GetAccelLimit());
+            S1CmdSpeed_degps = 0.01 * S1Motor.GetAccelLimit() * Sign(S1AngleToGo_deg) * sqrt(2.0 * fabs(S1AngleToGo_deg) / (S1Motor.GetAccelLimit() * 0.01));
 
             // Control pump speed
             pumpSpeed_degps = (!EStopActive && !instructionComplete && pumpThisMode && ((Target_m - Pos_m).magnitude() < posTol_m))

@@ -5,6 +5,9 @@
 #include <cstring>
 #include <algorithm>
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/portmacro.h"
+
 static const char *TAG = "InfluxDBCmdAndTlm";
 
 SemaphoreHandle_t TlmBufferMutex = nullptr;
@@ -15,6 +18,52 @@ static char TransmitTlmBuffer[BUFFER_SIZE];
 
 static size_t WorkingTlmBufferIdx = 0;
 static size_t TransmitTlmBufferIdx = 0;
+
+// Lightweight, lock-free ring buffer for log lines captured via vprintf hook.
+// Keep sizes modest to avoid memory pressure on the ESP32.
+#define LOG_RING_CAPACITY 32
+#define LOG_MSG_MAX_LEN   160
+
+static char LogRing[LOG_RING_CAPACITY][LOG_MSG_MAX_LEN];
+static volatile uint16_t LogHead = 0; // next write index
+static volatile uint16_t LogTail = 0; // next read index
+static portMUX_TYPE LogMux = portMUX_INITIALIZER_UNLOCKED;
+
+static inline bool log_ring_empty() { return LogHead == LogTail; }
+static inline bool log_ring_full() { return (uint16_t)((LogHead + 1) % LOG_RING_CAPACITY) == LogTail; }
+
+static inline void log_ring_push(const char *msg, size_t len)
+{
+    if (!msg || len == 0) return;
+    if (len >= LOG_MSG_MAX_LEN) len = LOG_MSG_MAX_LEN - 1;
+    portENTER_CRITICAL(&LogMux);
+    uint16_t idx = LogHead;
+    memcpy(LogRing[idx], msg, len);
+    LogRing[idx][len] = '\0';
+    LogHead = (uint16_t)((LogHead + 1) % LOG_RING_CAPACITY);
+    if (LogHead == LogTail) {
+        // overwrite oldest
+        LogTail = (uint16_t)((LogTail + 1) % LOG_RING_CAPACITY);
+    }
+    portEXIT_CRITICAL(&LogMux);
+}
+
+static inline bool log_ring_pop(char *out, size_t out_sz)
+{
+    if (!out || out_sz == 0) return false;
+    portENTER_CRITICAL(&LogMux);
+    if (log_ring_empty()) {
+        portEXIT_CRITICAL(&LogMux);
+        return false;
+    }
+    uint16_t idx = LogTail;
+    LogTail = (uint16_t)((LogTail + 1) % LOG_RING_CAPACITY);
+    portEXIT_CRITICAL(&LogMux);
+
+    strncpy(out, LogRing[idx], out_sz - 1);
+    out[out_sz - 1] = '\0';
+    return true;
+}
 
 // Task handles
 static TaskHandle_t AggregateTlmTaskHandle = NULL;
@@ -121,14 +170,12 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt) {
 
 static int InfluxVprintf(const char *str, va_list args)
 {
-    char logBuffer[256];
+    char logBuffer[LOG_MSG_MAX_LEN];
     int len = vsnprintf(logBuffer, sizeof(logBuffer), str, args);
-    if (len > 0)
-    {
-        size_t payloadLength = (len < sizeof(logBuffer)) ? len : sizeof(logBuffer) - 1;
-
-        AddLogToBuffer(logBuffer);
-//        (void)SendProtocolMessage(MSG_TYPE_LOG, (uint8_t *)logBuffer, payloadLength);
+    if (len > 0) {
+        size_t payloadLength = (len < sizeof(logBuffer)) ? (size_t)len : sizeof(logBuffer) - 1;
+        // Push to lightweight ring; do not call ESP_LOG* or FreeRTOS APIs here
+        log_ring_push(logBuffer, payloadLength);
     }
     return len;
 }
@@ -152,15 +199,9 @@ void AddLogToBuffer(const char *message)
         {
             WorkingTlmBufferIdx += written;
         }
-        else
-        {
-            ESP_LOGW(TAG, "Buffer overflow");
-        }
+        // else: drop silently to avoid recursive logging
     }
-    else
-    {
-        ESP_LOGE(TAG, "Error writing to buffer");
-    }
+    // else: drop silently
 }
 
 void AddDataToBuffer(const char *Measurement, const char *Field, float Value, int64_t TimeStamp)
@@ -177,15 +218,9 @@ void AddDataToBuffer(const char *Measurement, const char *Field, float Value, in
         {
             WorkingTlmBufferIdx += written;
         }
-        else
-        {
-            ESP_LOGW(TAG, "Buffer overflow prevented, data not added");
-        }
+        // else: drop silently
     }
-    else
-    {
-        ESP_LOGE(TAG, "Error writing to buffer");
-    }
+    // else: drop silently
 }
 
 void CmdAndTlmInit(void)
@@ -201,6 +236,9 @@ void CmdAndTlmStart(void)
     xTaskCreate(TransmitTlmTask, "TlmTransmit", 8192, NULL, 1, &TransmitTlmTaskHandle);
     xTaskCreate(AggregateTlmTask, "TlmAggregate", 8192, NULL, 1, &AggregateTlmTaskHandle);
     xTaskCreate(QueryCmdTask, "CmdQuery", 8192, NULL, 1, &QueryCmdsTaskHandle);
+
+    // Enable log capture to ring buffer
+    esp_log_set_vprintf(InfluxVprintf);
     CommandHandlerStart();
 }
 
@@ -284,18 +322,17 @@ void TransmitTlmTask(void *Parameters)
 {
     for (;;)
     {
-        // Copy the telemetry buffer to a transmit buffer, briefly pause aggregation
+        // Copy the telemetry buffer to a transmit buffer
+        bool has_new_data = false;
         if (WorkingTlmBufferIdx > 0)
         {
-            // Suspend logging over WiFi
-            esp_log_set_vprintf(vprintf);
-
             // Take the buffer mutex and copy to transmit buffer
             xSemaphoreTake(TlmBufferMutex, portMAX_DELAY);
             TransmitTlmBufferIdx = WorkingTlmBufferIdx;
             memcpy(TransmitTlmBuffer, WorkingTlmBuffer, WorkingTlmBufferIdx);
             xSemaphoreGive(TlmBufferMutex);
             WorkingTlmBufferIdx = 0;
+            has_new_data = true;
         }
         
         // Create a new HTTP client if needed
@@ -318,20 +355,23 @@ void TransmitTlmTask(void *Parameters)
             esp_http_client_set_header(TlmHttpClient, "Content-Type", "text/plain");
         }
 
-        // Attempt to send the telemetry data
-        if (true) //xSemaphoreTake(WifiAvailableSemaphore, pdMS_TO_TICKS(100)) == pdTRUE)
+        // Attempt to send the telemetry data only if we copied new data
+        if (has_new_data)
         {
-            SendDataToInflux(TransmitTlmBuffer, TransmitTlmBufferIdx);
-        }
-        else if (TlmHttpClient)
-        {
-            esp_http_client_cleanup(TlmHttpClient);
-            TlmHttpClient = NULL;
+            if (true) //xSemaphoreTake(WifiAvailableSemaphore, pdMS_TO_TICKS(100)) == pdTRUE)
+            {
+                SendDataToInflux(TransmitTlmBuffer, TransmitTlmBufferIdx);
+            }
+            else if (TlmHttpClient)
+            {
+                esp_http_client_cleanup(TlmHttpClient);
+                TlmHttpClient = NULL;
+            }
+
+            // Clear transmit buffer index so we don't resend stale data next cycle
+            TransmitTlmBufferIdx = 0;
         }
 
-        // Restart logging over WiFi
-        esp_log_set_vprintf(InfluxVprintf);
-        
         vTaskDelay(pdMS_TO_TICKS(TRANSMITPERIOD_MS));
     }
 }
@@ -351,6 +391,16 @@ void AggregateTlmTask(void *Parameters)
         // Acquire the mutex before updating shared data
         if (true)
         {
+            // Drain a limited number of captured log lines to avoid WDT starvation
+            const int LOG_DRAIN_MAX = 32;
+            int drained = 0;
+            char msg[LOG_MSG_MAX_LEN];
+            while (drained < LOG_DRAIN_MAX && log_ring_pop(msg, sizeof(msg)))
+            {
+                AddLogToBuffer(msg);
+                ++drained;
+            }
+
             if (sendBufferOverflowWarning && WorkingTlmBufferIdx > WARN_BUFFER_SIZE)
             {
                 ESP_LOGW(TAG, "Buffer overflow warning: %d bytes used", WorkingTlmBufferIdx);
