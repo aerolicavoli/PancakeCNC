@@ -1,5 +1,7 @@
 #include "MotorControl.h"
 #include "CommandHandler.h"
+#include "JogGuidance.h"
+#include "ArcGuidance.h"
 
 const char *TAG = "CNCControl";
 
@@ -27,8 +29,9 @@ static StepperMotor S1Motor(S1_MOTOR_PULSE, S1_MOTOR_DIR, 800.0, 50.0, motor_ste
                             "S1MOTOR", true);
 static StepperMotor PumpMotor(PUMP_MOTOR_PULSE, PUMP_MOTOR_DIR, 200.0, 200, motor_step_size_deg, "PUMPMOTOR", true);
 
-// No longer writing a local test program stream; all commands come from queue
-
+float Sign(float value) {
+    return std::copysign(1.0f, value);
+}
 void MotorControlInit()
 {
     // Hardware initialization
@@ -76,6 +79,10 @@ void MotorControlTask(void *Parameters)
     float S0CmdSpeed_degps = 0.0f;
     float S1CmdSpeed_degps = 0.0f;
     float pumpSpeed_degps = 0.0f;
+    // Pump purge state
+    bool PumpPurgeActive = false;
+    float PumpPurgeSpeed_degps = 0.0f;
+    int PumpPurgeRemaining_ms = 0;
 
     // Program control
     bool instructionComplete = true;
@@ -87,6 +94,8 @@ void MotorControlTask(void *Parameters)
     WaitGuidance waitGuidance;
     SineGuidance sineGuidance;
     ConstantSpeed constantSpeed;
+    JogGuidance jogGuidance;
+    ArcGuidance arcGuidance;
 
     GeneralGuidance *currentGuidance = nullptr;
 
@@ -176,6 +185,22 @@ void MotorControlTask(void *Parameters)
                         ESP_LOGI(TAG, "Applied pumpConstant_degpm=%.3f", pumpConstant_degpm);
                     }
                 }
+                else if (peeked.opcode == CNC_PUMP_PURGE_OPCODE)
+                {
+                    decoded_cmd_payload_t cfg;
+                    xQueueReceive(cmd_queue_cnc, &cfg, 0);
+                    if (cfg.instruction_length >= (sizeof(float) + sizeof(int32_t)))
+                    {
+                        float spd;
+                        int32_t dur;
+                        memcpy(&spd, &cfg.instructions[2], sizeof(float));
+                        memcpy(&dur, &cfg.instructions[6], sizeof(int32_t));
+                        PumpPurgeSpeed_degps = spd;
+                        PumpPurgeRemaining_ms = dur;
+                        PumpPurgeActive = (dur > 0);
+                        ESP_LOGW(TAG, "Pump purge received: speed=%.1f deg/s, duration=%d ms", spd, (int)dur);
+                    }
+                }
                 else
                 {
                     break; // next item is guidance or unknown; leave it
@@ -209,7 +234,12 @@ void MotorControlTask(void *Parameters)
                             pumpThisMode = true;
                             break;
                         case CNC_JOG_OPCODE:
-                            // TODO
+                            currentGuidance = &jogGuidance;
+                            // pumpThisMode decided after config using PumpOn
+                            break;
+                        case CNC_ARC_OPCODE:
+                            currentGuidance = &arcGuidance;
+                            pumpThisMode = true; // extrude along arc
                             break;
                         case CNC_WAIT_OPCODE:
                             currentGuidance = &waitGuidance;
@@ -238,6 +268,11 @@ void MotorControlTask(void *Parameters)
                         }
                         else
                         {
+                            // Set pump for jog based on config
+                            if (message.OpCode == CNC_JOG_OPCODE)
+                            {
+                                pumpThisMode = (jogGuidance.Config.PumpOn != 0);
+                            }
                             ESP_LOGI(TAG, "Starting OpCode: 0x%02X", message.OpCode);
                         }
                     }
@@ -284,15 +319,32 @@ void MotorControlTask(void *Parameters)
                 pumpSpeed_degps = 0.0f;
                 Target_m = Pos_m;
             }
+            // Control motor speed by assuming a constant deceleration. 
+            // Solve the quadratic to find the max speed that can be decelerated
+            // over the given angle
+            float S0AngleToGo_deg = (targetS0_deg - LocalS0Tlm.Position_deg);
+            S0CmdSpeed_degps = S0Motor.GetAccelLimit() * Sign(S0AngleToGo_deg) * sqrt(2.0 * fabs(S0AngleToGo_deg) / S0Motor.GetAccelLimit());
 
-            // Control motor speed using a simple proportional law
-            S0CmdSpeed_degps = (targetS0_deg - LocalS0Tlm.Position_deg) * kp_hz;
-            S1CmdSpeed_degps = (targetS1_deg - LocalS1Tlm.Position_deg) * kp_hz;
+            float S1AngleToGo_deg = (targetS1_deg - LocalS1Tlm.Position_deg);
+            S1CmdSpeed_degps = S1Motor.GetAccelLimit() * Sign(S1AngleToGo_deg) * sqrt(2.0 * fabs(S1AngleToGo_deg) / S1Motor.GetAccelLimit());
 
             // Control pump speed
             pumpSpeed_degps = (!EStopActive && !instructionComplete && pumpThisMode && ((Target_m - Pos_m).magnitude() < posTol_m))
                                   ? Vel_mps.magnitude() * pumpConstant_degpm
                                   : 0.0;
+        }
+
+        // Apply pump purge override if active
+        if (!EStopActive && PumpPurgeActive)
+        {
+            pumpSpeed_degps = PumpPurgeSpeed_degps;
+            PumpPurgeRemaining_ms -= MOTOR_CONTROL_PERIOD_MS;
+            if (PumpPurgeRemaining_ms <= 0)
+            {
+                PumpPurgeActive = false;
+                pumpSpeed_degps = 0.0f;
+                ESP_LOGI(TAG, "Pump purge complete");
+            }
         }
 
         // Command Speed

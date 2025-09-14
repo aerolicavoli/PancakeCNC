@@ -10,9 +10,10 @@ static inline bool is_cnc_opcode(uint8_t op)
 {
     // Match currently used CNC opcodes from SerialParser.h
     // CNC_SPIRAL_OPCODE 0x11, CNC_JOG_OPCODE 0x12, CNC_WAIT_OPCODE 0x13,
-    // CNC_SINE_OPCODE 0x14, CNC_CONSTANT_SPEED_OPCODE 0x15
-    // plus config opcodes 0x16, 0x17 which should enter the CNC queue too
-    return (op >= 0x11 && op <= 0x17);
+    // CNC_SINE_OPCODE 0x14, CNC_CONSTANT_SPEED_OPCODE 0x15,
+    // CNC_CONFIG_MOTOR_LIMITS 0x16, CNC_CONFIG_PUMP_CONSTANT 0x17,
+    // CNC_ARC_OPCODE 0x18, CNC_PUMP_PURGE_OPCODE 0x19
+    return (op >= 0x11 && op <= 0x19);
 }
 
 void CommandHandlerInit(void)

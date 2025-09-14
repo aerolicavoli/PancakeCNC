@@ -330,7 +330,7 @@ void TransmitTlmTask(void *Parameters)
         }
 
         // Restart logging over WiFi
-        //esp_log_set_vprintf(InfluxVprintf);
+        esp_log_set_vprintf(InfluxVprintf);
         
         vTaskDelay(pdMS_TO_TICKS(TRANSMITPERIOD_MS));
     }
