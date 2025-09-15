@@ -19,8 +19,11 @@ Commands are encoded as binary [opcode][length][payload] and base64-encoded befo
 from __future__ import annotations
 
 import base64
+import csv
+import hashlib
 import os
 import sys
+import threading
 import time
 from typing import Optional, Dict, Tuple, Any, List
 import shlex
@@ -43,6 +46,7 @@ INFLUXDB_URL = os.environ.get("INFLUXDB_URL")
 INFLUXDB_TOKEN = os.environ.get("INFLUXDB_TOKEN")
 INFLUXDB_ORG = os.environ.get("INFLUXDB_ORG")
 INFLUXDB_CMD_BUCKET = os.environ.get("INFLUXDB_CMD_BUCKET")
+INFLUXDB_TLM_BUCKET = os.environ.get("INFLUXDB_TLM_BUCKET", INFLUXDB_CMD_BUCKET)
 
 
 OPCODES: Dict[str, Tuple[str, int]] = {  # echo mapping
@@ -389,7 +393,7 @@ def _build_command_packet(line: str) -> Optional[bytes]:
     return bytes([opcode, len(payload)]) + payload
 
 
-def _write_packet(packet: bytes) -> None:
+def _write_packet(packet: bytes, cmd_hash: str) -> None:
     url = f"{INFLUXDB_URL}/api/v2/write"
     params = {
         "org": INFLUXDB_ORG,
@@ -402,12 +406,73 @@ def _write_packet(packet: bytes) -> None:
     }
     b64 = base64.b64encode(packet).decode("ascii")
     timestamp = int(time.time() * 1000)
-    line = f"cmd data=\"{b64}\" {timestamp}"
+    line = f"cmd,hash={cmd_hash} data=\"{b64}\" {timestamp}"
     resp = requests.post(url, params=params, data=line, headers=headers, timeout=5)
     resp.raise_for_status()
 
 
-def _send_command(line: str) -> bool:
+def _run_query(flux: str) -> List[Dict[str, str]]:
+    """Run a Flux query and return rows as dicts."""
+
+    url = f"{INFLUXDB_URL}/api/v2/query"
+    params = {"org": INFLUXDB_ORG}
+    headers = {
+        "Authorization": f"Token {INFLUXDB_TOKEN}",
+        "Content-Type": "application/vnd.flux",
+        "Accept": "application/csv",
+    }
+    resp = requests.post(url, params=params, data=flux, headers=headers, timeout=10)
+    resp.raise_for_status()
+    text = resp.text
+    return list(csv.DictReader(line for line in text.splitlines() if not line.startswith("#")))
+
+
+def _log_loop() -> None:
+    seen = set()
+    flux = (
+        f'from(bucket:"{INFLUXDB_TLM_BUCKET}") |> range(start:-5m) '
+        '|> filter(fn: (r) => r._measurement == "logs") '
+        '|> sort(columns:["_time"]) |> tail(n:20)'
+    )
+    while True:
+        try:
+            rows = _run_query(flux)
+            for row in rows:
+                uid = row.get("_time", "") + row.get("_value", "")
+                if uid in seen:
+                    continue
+                seen.add(uid)
+                msg = row.get("_value", "")
+                print(f"{CYAN}{msg}{RESET}")
+        except Exception as exc:  # pragma: no cover
+            print(f"{RED}Log error: {exc}{RESET}")
+        time.sleep(5)
+
+
+def _ack_loop(pending: Dict[str, str]) -> None:
+    seen = set()
+    flux = (
+        f'from(bucket:"{INFLUXDB_TLM_BUCKET}") |> range(start:-5m) '
+        '|> filter(fn: (r) => r._measurement == "cmd_ack") '
+        '|> sort(columns:["_time"]) |> tail(n:50)'
+    )
+    while True:
+        try:
+            rows = _run_query(flux)
+            for row in rows:
+                h = row.get("hash") or row.get("_value")
+                if not h or h in seen:
+                    continue
+                seen.add(h)
+                cmd = pending.pop(h, None)
+                if cmd:
+                    print(f"{GREEN}\u2713 {cmd}{RESET}")
+        except Exception:  # pragma: no cover
+            pass
+        time.sleep(2)
+
+
+def _send_command(line: str, pending: Dict[str, str]) -> bool:
     parts = shlex.split(line)
     if not parts:
         return False
@@ -459,7 +524,9 @@ def _send_command(line: str) -> bool:
                 if pkt is not None:
                     # Show file-driven lines in a muted style
                     print(f"{DIM}↳ {s}{RESET}")
-                    _write_packet(pkt)
+                    h = hashlib.sha1(pkt).hexdigest()[:8]
+                    pending[h] = f"↳ {s}"
+                    _write_packet(pkt, h)
                     time.sleep(delay_ms / 1000.0)
                 
         return True
@@ -494,7 +561,9 @@ def _send_command(line: str) -> bool:
     pkt = _build_command_packet(line)
     if pkt is None:
         return False
-    _write_packet(pkt)
+    h = hashlib.sha1(pkt).hexdigest()[:8]
+    pending[h] = line
+    _write_packet(pkt, h)
     return True
 
 
@@ -503,6 +572,11 @@ def main() -> None:
     _require(INFLUXDB_TOKEN, "INFLUXDB_TOKEN")
     _require(INFLUXDB_ORG, "INFLUXDB_ORG")
     _require(INFLUXDB_CMD_BUCKET, "INFLUXDB_CMD_BUCKET")
+    _require(INFLUXDB_TLM_BUCKET, "INFLUXDB_TLM_BUCKET")
+
+    pending: Dict[str, str] = {}
+    threading.Thread(target=_log_loop, daemon=True).start()
+    threading.Thread(target=_ack_loop, args=(pending,), daemon=True).start()
 
     # Optional: readline for history + tab completion
     completer_installed = False
@@ -639,7 +713,7 @@ def main() -> None:
                 print_help()
                 continue
             try:
-                handled = _send_command(line)
+                handled = _send_command(line, pending)
                 if not handled:
                     print("Unknown or malformed command", file=sys.stderr)
                     print_help()
