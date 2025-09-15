@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
-"""Graphical command terminal for Pancake CNC with telemetry log and command ACKs.
+"""Command-line terminal for Pancake CNC with telemetry log and command ACKs.
 
-This is a simplified rewrite of ``CommandTerminal.py`` providing:
+This iteration drops the graphical interface from the previous version and
+returns to a simple console program while keeping the quality-of-life features:
 
-* Shortened argument syntax (``sc=0.2`` instead of ``SpiralConstant_mprad=0.2`` and
-  support for ``key value`` or ``key:value`` forms).
-* Embedded log output from the telemetry database, shown in cyan.
-* GUI built with ``tkinter`` featuring command history and an optional embedded
-  Grafana dashboard.
-* Each command is hashed and written to InfluxDB with the hash as a tag.  When the
-  ESP32 firmware emits a ``cmd_ack`` measurement with the same hash, the command line
-  turns bold and a check mark is inserted to acknowledge receipt.
+* Short argument aliases (``sc=0.2`` instead of ``SpiralConstant_mprad=0.2``)
+  and flexible ``key value`` or ``key:value`` token forms.
+* Log output from the telemetry bucket printed in cyan.
+* Commands are tagged with a short hash and acknowledgements show a green check
+  mark when a matching hash arrives from the ESP32 firmware.
 """
 
 from __future__ import annotations
@@ -22,20 +20,12 @@ import os
 import shlex
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 import requests
-import tkinter as tk
-from tkinter import scrolledtext
-import webbrowser
+import readline  # noqa: F401 - enables input history and editing
 
-# Optional embedded browser for the Grafana dashboard
-try:  # pragma: no cover - environment dependent
-    from tkinterweb import HtmlFrame  # type: ignore
-except Exception:  # pragma: no cover - fallback when unavailable
-    HtmlFrame = None  # type: ignore
-
-# Reuse packet building helpers from the original terminal
+# Reuse helpers from the original terminal
 from CommandTerminal import (
     _require,
     _build_echo_packet,
@@ -45,18 +35,22 @@ from CommandTerminal import (
     _parse_kv_tokens,
 )
 
-# Environment configuration
+
+# Environment configuration -------------------------------------------------
 INFLUXDB_URL = os.environ.get("INFLUXDB_URL")
 INFLUXDB_TOKEN = os.environ.get("INFLUXDB_TOKEN")
 INFLUXDB_ORG = os.environ.get("INFLUXDB_ORG")
 INFLUXDB_CMD_BUCKET = os.environ.get("INFLUXDB_CMD_BUCKET")
 INFLUXDB_TLM_BUCKET = os.environ.get("INFLUXDB_TLM_BUCKET", INFLUXDB_CMD_BUCKET)
-GRAFANA_DASHBOARD_URL = os.environ.get(
-    "GRAFANA_DASHBOARD_URL",
-    "https://pancakecnc.grafana.net/public-dashboards/ae64e58a8804496192893a149e2c3f9e",
-)
 
-# Short key aliases for less typing
+# ANSI colors
+RESET = "\033[0m"
+CYAN = "\033[36m"
+GREEN = "\033[32m"
+RED = "\033[31m"
+
+
+# Short key aliases for less typing ----------------------------------------
 SHORT_KEYS: Dict[str, Dict[str, str]] = {
     "cnc_spiral": {
         "sc": "SpiralConstant_mprad",
@@ -104,6 +98,7 @@ SHORT_KEYS: Dict[str, Dict[str, str]] = {
 
 def _apply_short_keys(cmd: str, tokens: List[str]) -> List[str]:
     """Expand short key tokens to full ``k=v`` strings."""
+
     mapping = SHORT_KEYS.get(cmd, {})
     out: List[str] = []
     i = 0
@@ -116,8 +111,7 @@ def _apply_short_keys(cmd: str, tokens: List[str]) -> List[str]:
         else:
             if i + 1 >= len(tokens):
                 raise ValueError(f"Missing value for {tok}")
-            k = tok
-            v = tokens[i + 1]
+            k, v = tok, tokens[i + 1]
             i += 1
         k = mapping.get(k, k)
         out.append(f"{k}={v}")
@@ -127,6 +121,7 @@ def _apply_short_keys(cmd: str, tokens: List[str]) -> List[str]:
 
 def _build_command_packet(line: str) -> Optional[bytes]:
     """Build a command packet from a user-entered line."""
+
     parts = shlex.split(line)
     if not parts:
         return None
@@ -149,6 +144,7 @@ def _build_command_packet(line: str) -> Optional[bytes]:
 
 def _write_packet(packet: bytes, cmd_hash: str) -> None:
     """Write the packet to the InfluxDB command bucket with a hash tag."""
+
     url = f"{INFLUXDB_URL}/api/v2/write"
     params = {"org": INFLUXDB_ORG, "bucket": INFLUXDB_CMD_BUCKET, "precision": "ms"}
     headers = {"Authorization": f"Token {INFLUXDB_TOKEN}", "Content-Type": "text/plain"}
@@ -161,6 +157,7 @@ def _write_packet(packet: bytes, cmd_hash: str) -> None:
 
 def _run_query(flux: str) -> List[Dict[str, str]]:
     """Run a Flux query and return rows as dicts."""
+
     url = f"{INFLUXDB_URL}/api/v2/query"
     params = {"org": INFLUXDB_ORG}
     headers = {
@@ -171,149 +168,56 @@ def _run_query(flux: str) -> List[Dict[str, str]]:
     resp = requests.post(url, params=params, data=flux, headers=headers, timeout=10)
     resp.raise_for_status()
     text = resp.text
-    reader = csv.DictReader(line for line in text.splitlines() if not line.startswith("#"))
-    return list(reader)
+    return list(csv.DictReader(line for line in text.splitlines() if not line.startswith("#")))
 
 
-class CommandTerminalGUI:
-    def __init__(self) -> None:
-        self.root = tk.Tk()
-        self.root.title("Pancake Command Terminal V2")
-        self.root.configure(bg="black")
-
-        left = tk.Frame(self.root, bg="black")
-        left.pack(side="left", fill="both", expand=True)
-
-        self.output = scrolledtext.ScrolledText(
-            left, width=60, bg="black", fg="white", insertbackground="white"
-        )
-        self.output.pack(fill="both", expand=True)
-        self.output.tag_config("log", foreground="#00ffff")
-        self.output.tag_config("error", foreground="#ff5555")
-        self.output.tag_config("ack", font=(None, 10, "bold"))
-        self.output.configure(state=tk.DISABLED)
-        self.output.bind("<1>", lambda _e: self.entry.focus_set())
-
-        entry_frame = tk.Frame(left, bg="black")
-        entry_frame.pack(fill="x")
-        self.entry = tk.Entry(entry_frame, bg="#222222", fg="white", insertbackground="white")
-        self.entry.pack(side="left", fill="x", expand=True)
-        self.entry.bind("<Return>", self.send_current)
-        tk.Button(entry_frame, text="Send", command=self.send_current).pack(side="left")
-        self.entry.focus_set()
-
-        right = tk.Frame(self.root, bg="black")
-        right.pack(side="left", fill="both", expand=True)
-        if HtmlFrame:
-            self.browser = HtmlFrame(right, horizontal_scrollbar="auto")
-            self.browser.pack(fill="both", expand=True)
-            try:  # pragma: no cover - external resource
-                self.browser.load_website(GRAFANA_DASHBOARD_URL)
-            except Exception:  # pragma: no cover - network issues
-                tk.Label(
-                    right,
-                    text="Failed to load dashboard",
-                    fg="white",
-                    bg="black",
-                ).pack(fill="both", expand=True)
-        else:
-            link = tk.Label(
-                right,
-                text="Open Grafana Dashboard",
-                fg="cyan",
-                bg="black",
-                cursor="hand2",
-            )
-            link.pack(fill="both", expand=True)
-            link.bind("<Button-1>", lambda _e: webbrowser.open(GRAFANA_DASHBOARD_URL))
-
-        self.pending: Dict[str, str] = {}
-
-    # ------------------------------ GUI helpers ------------------------------
-    def append_line(self, msg: str, tag: Optional[str] = None) -> None:
-        self.output.configure(state=tk.NORMAL)
-        self.output.insert(tk.END, msg + "\n", tag)
-        self.output.configure(state=tk.DISABLED)
-        self.output.see(tk.END)
-
-    def send_current(self, event: Optional[Any] = None) -> None:
-        line = self.entry.get().strip()
-        if not line:
-            return
-        self.entry.delete(0, tk.END)
+# Telemetry loops -----------------------------------------------------------
+def _log_loop() -> None:
+    seen = set()
+    flux = (
+        f'from(bucket:"{INFLUXDB_TLM_BUCKET}") |> range(start:-5m) '
+        '|> filter(fn: (r) => r._measurement == "logs") '
+        '|> sort(columns:["_time"]) |> tail(n:20)'
+    )
+    while True:
         try:
-            packet = _build_command_packet(line)
-            if packet is None:
-                return
-            h = hashlib.sha1(packet).hexdigest()[:8]
-            _write_packet(packet, h)
-            tag = f"cmd_{h}"
-            self.output.configure(state=tk.NORMAL)
-            self.output.insert(tk.END, f"> {line}\n", tag)
-            self.output.configure(state=tk.DISABLED)
-            self.output.see(tk.END)
-            self.pending[h] = tag
-        except Exception as exc:
-            self.append_line(f"Error: {exc}", "error")
-
-    def mark_ack(self, h: str) -> None:
-        tag = self.pending.pop(h, None)
-        if not tag:
-            return
-        ranges = self.output.tag_ranges(tag)
-        if ranges:
-            self.output.configure(state=tk.NORMAL)
-            self.output.insert(ranges[0], "✓ ")
-            self.output.tag_add("ack", ranges[0], ranges[1])
-            self.output.configure(state=tk.DISABLED)
-
-    # ------------------------------ Telemetry loops -------------------------
-    def start_background_tasks(self) -> None:
-        threading.Thread(target=self._log_loop, daemon=True).start()
-        threading.Thread(target=self._ack_loop, daemon=True).start()
-
-    def _log_loop(self) -> None:
-        seen = set()
-        flux = (
-            f'from(bucket:"{INFLUXDB_TLM_BUCKET}") |> range(start: -5m) '
-            '|> filter(fn: (r) => r._measurement == "logs") '
-            '|> sort(columns:["_time"]) |> tail(n:20)'
-        )
-        while True:
-            try:
-                rows = _run_query(flux)
-                for row in rows:
-                    uid = row.get("_time", "") + row.get("_value", "")
-                    if uid in seen:
-                        continue
-                    seen.add(uid)
-                    msg = row.get("_value", "")
-                    self.root.after(0, self.append_line, msg, "log")
-            except Exception as exc:  # pragma: no cover - network issues
-                self.root.after(0, self.append_line, f"Log error: {exc}", "error")
-            time.sleep(5)
-
-    def _ack_loop(self) -> None:
-        seen = set()
-        flux = (
-            f'from(bucket:"{INFLUXDB_TLM_BUCKET}") |> range(start: -5m) '
-            '|> filter(fn: (r) => r._measurement == "cmd_ack") '
-            '|> sort(columns:["_time"]) |> tail(n:50)'
-        )
-        while True:
-            try:
-                rows = _run_query(flux)
-                for row in rows:
-                    h = row.get("hash") or row.get("_value")
-                    if not h or h in seen:
-                        continue
-                    seen.add(h)
-                    self.root.after(0, self.mark_ack, h)
-            except Exception:  # pragma: no cover - network issues
-                pass
-            time.sleep(2)
+            rows = _run_query(flux)
+            for row in rows:
+                uid = row.get("_time", "") + row.get("_value", "")
+                if uid in seen:
+                    continue
+                seen.add(uid)
+                msg = row.get("_value", "")
+                print(f"{CYAN}{msg}{RESET}")
+        except Exception as exc:  # pragma: no cover - network issues
+            print(f"{RED}Log error: {exc}{RESET}")
+        time.sleep(5)
 
 
+def _ack_loop(pending: Dict[str, str]) -> None:
+    seen = set()
+    flux = (
+        f'from(bucket:"{INFLUXDB_TLM_BUCKET}") |> range(start:-5m) '
+        '|> filter(fn: (r) => r._measurement == "cmd_ack") '
+        '|> sort(columns:["_time"]) |> tail(n:50)'
+    )
+    while True:
+        try:
+            rows = _run_query(flux)
+            for row in rows:
+                h = row.get("hash") or row.get("_value")
+                if not h or h in seen:
+                    continue
+                seen.add(h)
+                cmd = pending.pop(h, None)
+                if cmd:
+                    print(f"{GREEN}✓ {cmd}{RESET}")
+        except Exception:  # pragma: no cover - network issues
+            pass
+        time.sleep(2)
+
+
+# --------------------------------------------------------------------------
 def main() -> None:  # pragma: no cover - interactive
     _require(INFLUXDB_URL, "INFLUXDB_URL")
     _require(INFLUXDB_TOKEN, "INFLUXDB_TOKEN")
@@ -321,10 +225,29 @@ def main() -> None:  # pragma: no cover - interactive
     _require(INFLUXDB_CMD_BUCKET, "INFLUXDB_CMD_BUCKET")
     _require(INFLUXDB_TLM_BUCKET, "INFLUXDB_TLM_BUCKET")
 
-    gui = CommandTerminalGUI()
-    gui.start_background_tasks()
-    gui.root.mainloop()
+    pending: Dict[str, str] = {}
+    threading.Thread(target=_log_loop, daemon=True).start()
+    threading.Thread(target=_ack_loop, args=(pending,), daemon=True).start()
+
+    while True:
+        try:
+            line = input("> ").strip()
+        except EOFError:
+            break
+        if not line:
+            continue
+        try:
+            packet = _build_command_packet(line)
+            if packet is None:
+                continue
+            h = hashlib.sha1(packet).hexdigest()[:8]
+            _write_packet(packet, h)
+            pending[h] = line
+            print(f"{h} sent")
+        except Exception as exc:
+            print(f"{RED}Error: {exc}{RESET}")
 
 
 if __name__ == "__main__":  # pragma: no cover
     main()
+
