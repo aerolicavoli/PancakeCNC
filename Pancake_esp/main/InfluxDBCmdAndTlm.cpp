@@ -91,6 +91,9 @@ void format_time_string(time_t raw_time, char *buffer, size_t buffer_size) {
     strftime(buffer, buffer_size, "%Y-%m-%d %H:%M:%S", &timeinfo);
 }
 
+// Forward declaration for command acknowledgement helper
+static void AddCmdAckToBuffer(const char *hash);
+
 // Function to handle HTTP events and process data
 esp_err_t _http_event_handler(esp_http_client_event_t *evt) {
     switch(evt->event_id) {
