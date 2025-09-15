@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional
 import requests
 import tkinter as tk
 from tkinter import scrolledtext
+import webbrowser
 
 # Optional embedded browser for the Grafana dashboard
 try:  # pragma: no cover - environment dependent
@@ -190,6 +191,8 @@ class CommandTerminalGUI:
         self.output.tag_config("log", foreground="#00ffff")
         self.output.tag_config("error", foreground="#ff5555")
         self.output.tag_config("ack", font=(None, 10, "bold"))
+        self.output.configure(state=tk.DISABLED)
+        self.output.bind("<1>", lambda _e: self.entry.focus_set())
 
         entry_frame = tk.Frame(left, bg="black")
         entry_frame.pack(fill="x")
@@ -197,27 +200,40 @@ class CommandTerminalGUI:
         self.entry.pack(side="left", fill="x", expand=True)
         self.entry.bind("<Return>", self.send_current)
         tk.Button(entry_frame, text="Send", command=self.send_current).pack(side="left")
+        self.entry.focus_set()
 
-        right = tk.Frame(self.root)
+        right = tk.Frame(self.root, bg="black")
         right.pack(side="left", fill="both", expand=True)
         if HtmlFrame:
             self.browser = HtmlFrame(right, horizontal_scrollbar="auto")
             self.browser.pack(fill="both", expand=True)
             try:  # pragma: no cover - external resource
                 self.browser.load_website(GRAFANA_DASHBOARD_URL)
-            except Exception:
-                pass
+            except Exception:  # pragma: no cover - network issues
+                tk.Label(
+                    right,
+                    text="Failed to load dashboard",
+                    fg="white",
+                    bg="black",
+                ).pack(fill="both", expand=True)
         else:
-            tk.Label(
+            link = tk.Label(
                 right,
-                text="tkinterweb not installed. Grafana dashboard unavailable.",
-            ).pack(fill="both", expand=True)
+                text="Open Grafana Dashboard",
+                fg="cyan",
+                bg="black",
+                cursor="hand2",
+            )
+            link.pack(fill="both", expand=True)
+            link.bind("<Button-1>", lambda _e: webbrowser.open(GRAFANA_DASHBOARD_URL))
 
         self.pending: Dict[str, str] = {}
 
     # ------------------------------ GUI helpers ------------------------------
     def append_line(self, msg: str, tag: Optional[str] = None) -> None:
+        self.output.configure(state=tk.NORMAL)
         self.output.insert(tk.END, msg + "\n", tag)
+        self.output.configure(state=tk.DISABLED)
         self.output.see(tk.END)
 
     def send_current(self, event: Optional[Any] = None) -> None:
@@ -232,7 +248,9 @@ class CommandTerminalGUI:
             h = hashlib.sha1(packet).hexdigest()[:8]
             _write_packet(packet, h)
             tag = f"cmd_{h}"
+            self.output.configure(state=tk.NORMAL)
             self.output.insert(tk.END, f"> {line}\n", tag)
+            self.output.configure(state=tk.DISABLED)
             self.output.see(tk.END)
             self.pending[h] = tag
         except Exception as exc:
@@ -244,8 +262,10 @@ class CommandTerminalGUI:
             return
         ranges = self.output.tag_ranges(tag)
         if ranges:
+            self.output.configure(state=tk.NORMAL)
             self.output.insert(ranges[0], "✓ ")
             self.output.tag_add("ack", ranges[0], ranges[1])
+            self.output.configure(state=tk.DISABLED)
 
     # ------------------------------ Telemetry loops -------------------------
     def start_background_tasks(self) -> None:
