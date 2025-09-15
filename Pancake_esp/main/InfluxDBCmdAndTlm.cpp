@@ -149,6 +149,9 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt) {
                             char time_str[50];
                             format_time_string(last_message_timestamp, time_str, sizeof(time_str));
                             ESP_LOGD(TAG, "Posted payload to decode queue. Time: %s, Payload: %s", time_str, new_payload.payload);
+                            if (!cmd.hash.empty()) {
+                                AddCmdAckToBuffer(cmd.hash.c_str());
+                            }
                         } else {
                             ESP_LOGE(TAG, "Failed to post command to decode queue.");
                             break;
@@ -221,6 +224,29 @@ void AddDataToBuffer(const char *Measurement, const char *Field, float Value, in
         // else: drop silently
     }
     // else: drop silently
+}
+
+static void AddCmdAckToBuffer(const char *hash)
+{
+    if (!hash) return;
+    int64_t timeStamp;
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    timeStamp = (int64_t)tv.tv_sec * 1000.0 + (int64_t)tv.tv_usec / 1000L;
+
+    xSemaphoreTake(TlmBufferMutex, portMAX_DELAY);
+    int written = snprintf(
+        WorkingTlmBuffer + WorkingTlmBufferIdx, BUFFER_SIZE - WorkingTlmBufferIdx,
+        "cmd_ack,hash=%s value=1 %lld\n", hash, timeStamp);
+    xSemaphoreGive(TlmBufferMutex);
+
+    if (written > 0)
+    {
+        if (WorkingTlmBufferIdx + written < BUFFER_SIZE)
+        {
+            WorkingTlmBufferIdx += written;
+        }
+    }
 }
 
 void CmdAndTlmInit(void)

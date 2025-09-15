@@ -11,6 +11,7 @@
 struct InfluxDBCommand {
     time_t timestamp;      // UTC timestamp of the command
     std::string payload;   // Base64 encoded payload
+    std::string hash;      // Command hash tag
 };
 
 // Return the last non-empty line from an InfluxDB CSV response.

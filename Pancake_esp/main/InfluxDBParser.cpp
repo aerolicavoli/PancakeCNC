@@ -98,6 +98,11 @@ bool parse_influxdb_command(const std::string &body, InfluxDBCommand &cmd) {
 
     cmd.timestamp = timestamp;
     cmd.payload = tokens[6];
+    if (tokens.size() > 9) {
+        cmd.hash = tokens[9];
+    } else {
+        cmd.hash.clear();
+    }
     return true;
 }
 
@@ -130,6 +135,9 @@ size_t parse_influxdb_command_list(const std::string &body, std::vector<InfluxDB
         InfluxDBCommand cmd;
         cmd.timestamp = timestamp;
         cmd.payload = tokens[6];
+        if (tokens.size() > 9) {
+            cmd.hash = tokens[9];
+        }
         out.push_back(std::move(cmd));
         ++count;
     }
