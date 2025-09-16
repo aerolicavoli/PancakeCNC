@@ -8,7 +8,6 @@ const char *TAG = "CNCControl";
 motor_tlm_t LocalS0Tlm;
 motor_tlm_t LocalS1Tlm;
 motor_tlm_t LocalPumpTlm;
-motor_command_t command;
 
 Vector2D Pos_m{0.0f, 0.0f};
 Vector2D Vel_mps{0.0f, 0.0f};
@@ -71,6 +70,7 @@ void MotorControlTask(void *Parameters)
     // Control parms
     const float kp_hz(1.0e+0);
     static float pumpConstant_degpm = 1.0e5f;
+    static float accelScale = 0.01f;
     const float posTol_m(1.0);
 
     // Working variables
@@ -183,6 +183,18 @@ void MotorControlTask(void *Parameters)
                         memcpy(&k, &cfg.instructions[2], sizeof(float));
                         pumpConstant_degpm = k;
                         ESP_LOGI(TAG, "Applied pumpConstant_degpm=%.3f", pumpConstant_degpm);
+                    }
+                }
+                else if (peeked.opcode == CNC_CONFIG_ACCEL_SCALE_OPCODE)
+                {
+                    decoded_cmd_payload_t cfg;
+                    xQueueReceive(cmd_queue_cnc, &cfg, 0);
+                    if (cfg.instruction_length >= sizeof(float))
+                    {
+                        float s;
+                        memcpy(&s, &cfg.instructions[2], sizeof(float));
+                        accelScale = s;
+                        ESP_LOGI(TAG, "Applied accelScale=%.3f", accelScale);
                     }
                 }
                 else if (peeked.opcode == CNC_PUMP_PURGE_OPCODE)
@@ -319,14 +331,17 @@ void MotorControlTask(void *Parameters)
                 pumpSpeed_degps = 0.0f;
                 Target_m = Pos_m;
             }
-            // Control motor speed by assuming a constant deceleration. 
+            // Control motor speed by assuming a constant deceleration.
             // Solve the quadratic to find the max speed that can be decelerated
-            // over the given angle. Use a fraction (0.01) of what the motors can achieve
+            // over the given angle, using a configurable fraction of the motors'
+            // acceleration capability.
             float S0AngleToGo_deg = (targetS0_deg - LocalS0Tlm.Position_deg);
-            S0CmdSpeed_degps = 0.01 * S0Motor.GetAccelLimit() * Sign(S0AngleToGo_deg) * sqrt(2.0 * fabs(S0AngleToGo_deg) / (S0Motor.GetAccelLimit() * 0.01));
+            float s0Accel = S0Motor.GetAccelLimit() * accelScale;
+            S0CmdSpeed_degps = s0Accel * Sign(S0AngleToGo_deg) * sqrt(2.0 * fabs(S0AngleToGo_deg) / s0Accel);
 
             float S1AngleToGo_deg = (targetS1_deg - LocalS1Tlm.Position_deg);
-            S1CmdSpeed_degps = 0.01 * S1Motor.GetAccelLimit() * Sign(S1AngleToGo_deg) * sqrt(2.0 * fabs(S1AngleToGo_deg) / (S1Motor.GetAccelLimit() * 0.01));
+            float s1Accel = S1Motor.GetAccelLimit() * accelScale;
+            S1CmdSpeed_degps = s1Accel * Sign(S1AngleToGo_deg) * sqrt(2.0 * fabs(S1AngleToGo_deg) / s1Accel);
 
             // Control pump speed
             pumpSpeed_degps = (!EStopActive && !instructionComplete && pumpThisMode && ((Target_m - Pos_m).magnitude() < posTol_m))
@@ -409,30 +424,6 @@ void MotorControlTask(void *Parameters)
         vTaskDelay(motorUpdatePeriod_Ticks);
     }
 }
-
-void HandleCommandQueue(void)
-{
-    if (xQueueReceive(CNCCommandQueue, &command, 0) == pdPASS)
-    {
-        switch (command.cmd_type)
-        {
-            case MOTOR_CMD_START:
-                ESP_LOGI(TAG, "Starting motor");
-                StartCNC();
-                break;
-
-            case MOTOR_CMD_STOP:
-                ESP_LOGI(TAG, "Stopping motor");
-                StopCNC();
-                break;
-
-            default:
-                ESP_LOGW(TAG, "Unknown command received");
-                break;
-        }
-    }
-}
-
 void StartCNC() { CNCEnabled = true; }
 
 void StopCNC()
