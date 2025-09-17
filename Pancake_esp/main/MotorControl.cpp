@@ -31,6 +31,19 @@ static StepperMotor PumpMotor(PUMP_MOTOR_PULSE, PUMP_MOTOR_DIR, 200.0, 200, moto
 float Sign(float value) {
     return std::copysign(1.0f, value);
 }
+
+static float WrapAngleDeltaDeg(float angle)
+{
+    while (angle > 180.0f)
+    {
+        angle -= 360.0f;
+    }
+    while (angle < -180.0f)
+    {
+        angle += 360.0f;
+    }
+    return angle;
+}
 void MotorControlInit()
 {
     // Hardware initialization
@@ -335,11 +348,11 @@ void MotorControlTask(void *Parameters)
             // Solve the quadratic to find the max speed that can be decelerated
             // over the given angle, using a configurable fraction of the motors'
             // acceleration capability.
-            float S0AngleToGo_deg = (targetS0_deg - LocalS0Tlm.Position_deg);
+            float S0AngleToGo_deg = WrapAngleDeltaDeg(targetS0_deg - LocalS0Tlm.Position_deg);
             float s0Accel = S0Motor.GetAccelLimit() * accelScale;
             S0CmdSpeed_degps = s0Accel * Sign(S0AngleToGo_deg) * sqrt(2.0 * fabs(S0AngleToGo_deg) / s0Accel);
 
-            float S1AngleToGo_deg = (targetS1_deg - LocalS1Tlm.Position_deg);
+            float S1AngleToGo_deg = WrapAngleDeltaDeg(targetS1_deg - LocalS1Tlm.Position_deg);
             float s1Accel = S1Motor.GetAccelLimit() * accelScale;
             S1CmdSpeed_degps = s1Accel * Sign(S1AngleToGo_deg) * sqrt(2.0 * fabs(S1AngleToGo_deg) / s1Accel);
 
