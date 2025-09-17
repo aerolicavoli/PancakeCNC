@@ -20,15 +20,7 @@ class JogGuidance : public GeneralGuidance
     const void *GetConfig() const override { return &Config; }
     size_t GetConfigLength() const override { return sizeof(Config); }
 
-    bool ConfigureFromMessage(ParsedMessag_t &Message) override
-    {
-        if (Message.OpCode != GetOpCode() || Message.payloadLength != sizeof(Config))
-        {
-            return false;
-        }
-        memcpy(&Config, Message.payload, sizeof(Config));
-        return true;
-    }
+    void ApplyConfig(const JogConfig &cfg) { Config = cfg; }
 
     bool GetTargetPosition(unsigned int DeltaTime_ms, Vector2D CurPos_m, Vector2D &CmdPos_m,
                            bool &CmdViaAngle, float &S0Speed_degps, float &S1Speed_degps) override

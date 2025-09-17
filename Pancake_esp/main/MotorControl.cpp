@@ -2,6 +2,9 @@
 #include "CommandHandler.h"
 #include "JogGuidance.h"
 #include "ArcGuidance.h"
+#include "CNCOpCodes.h"
+
+#include <cstring>
 
 const char *TAG = "CNCControl";
 
@@ -239,68 +242,144 @@ void MotorControlTask(void *Parameters)
             decoded_cmd_payload_t decoded{};
             if (xQueueReceive(cmd_queue_cnc, &decoded, 0) == pdTRUE)
             {
-                ParsedMessag_t message{};
-                message.OpCode = decoded.opcode;
-                message.payloadLength = decoded.instruction_length;
-                if (message.payloadLength > sizeof(message.payload))
+                size_t payloadLength = decoded.instruction_length;
+                if (payloadLength > CMD_PAYLOAD_MAX_LEN)
                 {
-                    ESP_LOGE(TAG, "Payload too large: %u", message.payloadLength);
+                    ESP_LOGE(TAG, "Payload too large: %u", (unsigned)payloadLength);
+                    continue;
                 }
-                else
-                {
-                    ESP_LOGI(TAG, "Configuring OpCode: 0x%02X", message.OpCode);
-                    memcpy(message.payload, decoded.instructions + 2, message.payloadLength);
-                    instructionComplete = false;
 
-                    switch (message.OpCode)
+                const uint8_t *payload = decoded.instructions + 2;
+                ESP_LOGI(TAG, "Configuring OpCode: 0x%02X", decoded.opcode);
+
+                instructionComplete = false;
+                currentGuidance = nullptr;
+                pumpThisMode = false;
+                bool configApplied = false;
+
+                switch (decoded.opcode)
+                {
+                    case CNC_SPIRAL_OPCODE:
                     {
-                        case CNC_SPIRAL_OPCODE:
+                        if (payloadLength == sizeof(SpiralConfig))
+                        {
+                            SpiralConfig cfg{};
+                            memcpy(&cfg, payload, sizeof(cfg));
+                            spiralGuidance.ApplyConfig(cfg);
                             currentGuidance = &spiralGuidance;
                             pumpThisMode = true;
-                            break;
-                        case CNC_JOG_OPCODE:
-                            currentGuidance = &jogGuidance;
-                            // pumpThisMode decided after config using PumpOn
-                            break;
-                        case CNC_ARC_OPCODE:
-                            currentGuidance = &arcGuidance;
-                            pumpThisMode = true; // extrude along arc
-                            break;
-                        case CNC_WAIT_OPCODE:
-                            currentGuidance = &waitGuidance;
-                            pumpThisMode = false;
-                            break;
-                        case CNC_SINE_OPCODE:
-                            currentGuidance = &sineGuidance;
-                            pumpThisMode = false;
-                            break;
-                        case CNC_CONSTANT_SPEED_OPCODE:
-                            currentGuidance = &constantSpeed;
-                            pumpThisMode = false;
-                            break;
-                        default:
-                            ESP_LOGE(TAG, "Unknown OpCode: 0x%02X", message.OpCode);
-                            instructionComplete = true;
-                            break;
-                    }
-
-                    if (!instructionComplete && currentGuidance != nullptr)
-                    {
-                        if (!currentGuidance->ConfigureFromMessage(message))
-                        {
-                            ESP_LOGE(TAG, "Failed to configure guidance for opcode 0x%02X", message.OpCode);
-                            instructionComplete = true;
+                            configApplied = true;
                         }
                         else
                         {
-                            // Set pump for jog based on config
-                            if (message.OpCode == CNC_JOG_OPCODE)
-                            {
-                                pumpThisMode = (jogGuidance.Config.PumpOn != 0);
-                            }
-                            ESP_LOGI(TAG, "Starting OpCode: 0x%02X", message.OpCode);
+                            ESP_LOGE(TAG, "Invalid spiral payload length: expected %u got %u",
+                                     (unsigned)sizeof(SpiralConfig), (unsigned)payloadLength);
                         }
+                        break;
                     }
+                    case CNC_JOG_OPCODE:
+                    {
+                        if (payloadLength == sizeof(JogConfig))
+                        {
+                            JogConfig cfg{};
+                            memcpy(&cfg, payload, sizeof(cfg));
+                            jogGuidance.ApplyConfig(cfg);
+                            currentGuidance = &jogGuidance;
+                            configApplied = true;
+                        }
+                        else
+                        {
+                            ESP_LOGE(TAG, "Invalid jog payload length: expected %u got %u",
+                                     (unsigned)sizeof(JogConfig), (unsigned)payloadLength);
+                        }
+                        break;
+                    }
+                    case CNC_ARC_OPCODE:
+                    {
+                        if (payloadLength == sizeof(ArcConfig))
+                        {
+                            ArcConfig cfg{};
+                            memcpy(&cfg, payload, sizeof(cfg));
+                            arcGuidance.ApplyConfig(cfg);
+                            currentGuidance = &arcGuidance;
+                            pumpThisMode = true;
+                            configApplied = true;
+                        }
+                        else
+                        {
+                            ESP_LOGE(TAG, "Invalid arc payload length: expected %u got %u",
+                                     (unsigned)sizeof(ArcConfig), (unsigned)payloadLength);
+                        }
+                        break;
+                    }
+                    case CNC_WAIT_OPCODE:
+                    {
+                        if (payloadLength == sizeof(WaitGuidance::WaitConfig))
+                        {
+                            WaitGuidance::WaitConfig cfg{};
+                            memcpy(&cfg, payload, sizeof(cfg));
+                            waitGuidance.ApplyConfig(cfg);
+                            currentGuidance = &waitGuidance;
+                            configApplied = true;
+                        }
+                        else
+                        {
+                            ESP_LOGE(TAG, "Invalid wait payload length: expected %u got %u",
+                                     (unsigned)sizeof(WaitGuidance::WaitConfig), (unsigned)payloadLength);
+                        }
+                        break;
+                    }
+                    case CNC_SINE_OPCODE:
+                    {
+                        if (payloadLength == sizeof(SineGuidance::SineConfig))
+                        {
+                            SineGuidance::SineConfig cfg{};
+                            memcpy(&cfg, payload, sizeof(cfg));
+                            sineGuidance.ApplyConfig(cfg);
+                            currentGuidance = &sineGuidance;
+                            configApplied = true;
+                        }
+                        else
+                        {
+                            ESP_LOGE(TAG, "Invalid sine payload length: expected %u got %u",
+                                     (unsigned)sizeof(SineGuidance::SineConfig), (unsigned)payloadLength);
+                        }
+                        break;
+                    }
+                    case CNC_CONSTANT_SPEED_OPCODE:
+                    {
+                        if (payloadLength == sizeof(ConstantSpeed::ConstantSpeedConfig))
+                        {
+                            ConstantSpeed::ConstantSpeedConfig cfg{};
+                            memcpy(&cfg, payload, sizeof(cfg));
+                            constantSpeed.ApplyConfig(cfg);
+                            currentGuidance = &constantSpeed;
+                            configApplied = true;
+                        }
+                        else
+                        {
+                            ESP_LOGE(TAG, "Invalid constant-speed payload length: expected %u got %u",
+                                     (unsigned)sizeof(ConstantSpeed::ConstantSpeedConfig),
+                                     (unsigned)payloadLength);
+                        }
+                        break;
+                    }
+                    default:
+                        ESP_LOGE(TAG, "Unknown OpCode: 0x%02X", decoded.opcode);
+                        break;
+                }
+
+                if (!configApplied || currentGuidance == nullptr)
+                {
+                    instructionComplete = true;
+                }
+                else
+                {
+                    if (decoded.opcode == CNC_JOG_OPCODE)
+                    {
+                        pumpThisMode = (jogGuidance.Config.PumpOn != 0);
+                    }
+                    ESP_LOGI(TAG, "Starting OpCode: 0x%02X", decoded.opcode);
                 }
             }
         }

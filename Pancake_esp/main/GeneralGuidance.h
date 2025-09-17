@@ -4,7 +4,7 @@
 #include "esp_types.h"
 
 #include "Vector2D.h"
-#include "SerialParser.h"
+#include "CNCOpCodes.h"
 #include "PanMath.h"
 
 enum GuidanceMode
@@ -36,7 +36,6 @@ class GeneralGuidance
                                    float &S1Speed_degps) = 0;
 
     virtual uint8_t GetOpCode() const = 0;
-    virtual bool ConfigureFromMessage(ParsedMessag_t &Message) = 0;
     virtual size_t GetConfigLength() const = 0;
     virtual const void *GetConfig() const = 0; // pointer to config bytes
 };
@@ -57,17 +56,10 @@ class WaitGuidance : public GeneralGuidance
     const void *GetConfig() const override { return &Config; }
     size_t GetConfigLength() const override { return sizeof(Config); }
 
-    bool ConfigureFromMessage(ParsedMessag_t &Message) override
+    void ApplyConfig(const WaitConfig &cfg)
     {
-        if (Message.OpCode != GetOpCode() || Message.payloadLength != sizeof(Config))
-        {
-            return false;
-        }
-        memcpy(&Config, Message.payload, sizeof(Config));
-
-        // Reset
+        Config = cfg;
         remaining_time_ms = Config.timeout_ms;
-        return true;
     }
 
     bool GetTargetPosition(unsigned int DeltaTime_ms, Vector2D CurPos_m, Vector2D &CmdPos_m,
@@ -106,17 +98,10 @@ class SineGuidance : public GeneralGuidance
     const void *GetConfig() const override { return &Config; }
     size_t GetConfigLength() const override { return sizeof(Config); }
 
-    bool ConfigureFromMessage(ParsedMessag_t &Message) override
+    void ApplyConfig(const SineConfig &cfg)
     {
-        if (Message.OpCode != GetOpCode() || Message.payloadLength != sizeof(Config))
-        {
-            return false;
-        }
-        memcpy(&Config, Message.payload, sizeof(Config));
-
-        // Reset
+        Config = cfg;
         theta_rad = 0.0f;
-        return true;
     }
 
     bool GetTargetPosition(unsigned int DeltaTime_ms, Vector2D CurPos_m, Vector2D &CmdPos_m,
@@ -157,16 +142,7 @@ class ConstantSpeed : public GeneralGuidance
     const void *GetConfig() const override { return &Config; }
     size_t GetConfigLength() const override { return sizeof(Config); }
 
-    bool ConfigureFromMessage(ParsedMessag_t &Message) override
-    {
-        if (Message.OpCode != GetOpCode() || Message.payloadLength != sizeof(Config))
-        {
-            return false;
-        }
-        memcpy(&Config, Message.payload, sizeof(Config));
-
-        return true;
-    }
+    void ApplyConfig(const ConstantSpeedConfig &cfg) { Config = cfg; }
 
     bool GetTargetPosition(unsigned int DeltaTime_ms, Vector2D CurPos_m, Vector2D &CmdPos_m,
                            bool &CmdViaAngle, float &S0Speed_degps, float &S1Speed_degps) override

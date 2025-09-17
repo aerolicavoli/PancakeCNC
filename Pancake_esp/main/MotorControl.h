@@ -14,7 +14,6 @@
 #include "GeneralGuidance.h"
 #include "GPIOAssignments.h"
 #include "PanMath.h"
-#include "SerialParser.h"
 #include "StepperMotor.h"
 #include "Vector2D.h"
 #include "Telemetry.h"

@@ -22,15 +22,10 @@ class ArcGuidance : public GeneralGuidance
     const void *GetConfig() const override { return &Config; }
     size_t GetConfigLength() const override { return sizeof(Config); }
 
-    bool ConfigureFromMessage(ParsedMessag_t &Message) override
+    void ApplyConfig(const ArcConfig &cfg)
     {
-        if (Message.OpCode != GetOpCode() || Message.payloadLength != sizeof(Config))
-        {
-            return false;
-        }
-        memcpy(&Config, Message.payload, sizeof(Config));
+        Config = cfg;
         initialized = false;
-        return true;
     }
 
     bool GetTargetPosition(unsigned int DeltaTime_ms, Vector2D CurPos_m, Vector2D &CmdPos_m,
