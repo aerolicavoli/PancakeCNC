@@ -8,6 +8,7 @@ Source code, mechanical designs, and electrical schematics developed for the pur
 - [About the Project](#about-the-project)
 - [System Architecture](#system-architecture)
 - [Generic Instruction Protocol](#generic-instruction-protocol)
+- [Run File Designer](#run-file-designer)
 
 ---
 
@@ -104,6 +105,32 @@ An example message encoding `0x04` (CNC Spiral Command) with 3 bytes of instruct
 
 0x04 0x03 0xAA 0xBB 0xCC
 
-- `0x04` → Spiral Command opcode  
-- `0x03` → Length of instruction payload (`n = 3`)  
-- `0xAA 0xBB 0xCC` → Instruction-specific data  
+- `0x04` → Spiral Command opcode
+- `0x03` → Length of instruction payload (`n = 3`)
+- `0xAA 0xBB 0xCC` → Instruction-specific data
+
+## Run File Designer
+
+`run_file_designer.py` provides a desktop editor for constructing the
+newline-delimited programs consumed by the controller's `run_file` command. The
+Tkinter UI exposes a gridded representation of the griddle and lets you add and
+reshape jogs, arcs, spirals and wait locations. Between every programmed feature
+the tool automatically inserts a pump-off travel jog so frosting flow stops
+during repositioning.
+
+Key capabilities:
+
+- Drag handles on each feature to move endpoints, arc centers, and spiral size.
+- Edit numeric parameters (speed, radius, timeouts, etc.) via the property
+  panel to dial-in precise geometry.
+- Define wait locations that send the toolhead to a point and pause for a
+  specified duration.
+- Export a ready-to-run text file where each line is a controller command.
+
+Launch the designer with:
+
+```bash
+python run_file_designer.py
+```
+
+The only dependency is the standard Tkinter module that ships with Python.
