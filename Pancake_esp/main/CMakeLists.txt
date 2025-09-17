@@ -1,6 +1,5 @@
 idf_component_register(SRCS "StepperMotor.cpp"
  "ArchimedeanSpiral.cpp"
- "SerialParser.cpp"
  "Vector2D.cpp"
  "pancake_esp_main.cpp"
  "InfluxDBParser.cpp"

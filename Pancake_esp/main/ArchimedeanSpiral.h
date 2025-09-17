@@ -28,18 +28,10 @@ class ArchimedeanSpiral : public GeneralGuidance
     const void *GetConfig() const override { return &Config; }
     size_t GetConfigLength() const override { return sizeof(Config); }
 
-    bool ConfigureFromMessage(ParsedMessag_t &Message) override
+    void ApplyConfig(const SpiralConfig &cfg)
     {
-        if (Message.OpCode != GetOpCode() || Message.payloadLength != sizeof(Config))
-        {
-            return false;
-        }
-        memcpy(&Config, Message.payload, sizeof(Config));
-
-        // Reset
+        Config = cfg;
         theta_rad = 0.0f;
-
-        return true;
     }
 
     SpiralConfig Config;

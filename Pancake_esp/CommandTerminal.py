@@ -49,7 +49,7 @@ OPCODES: Dict[str, Tuple[str, int]] = {  # echo mapping
     "e": ("Echo", 0x69),
 }
 
-# CNC opcode mapping (matches current firmware SerialParser.h values)
+# CNC opcode mapping (matches current firmware CNCOpCodes.h values)
 CNC_OPCODES: Dict[str, int] = {
     "cnc_spiral": 0x11,
     "cnc_jog": 0x12,
