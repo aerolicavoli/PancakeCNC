@@ -2,7 +2,6 @@
 #define UI_H
 
 #include "GPIOAssignments.h"
-#include "PiUI.h"
 #include "defines.h"
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"

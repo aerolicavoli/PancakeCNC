@@ -8,7 +8,6 @@
 extern "C"
 {
 
-#include "PiUI.h"
 #include "Safety.h"
 //#include "UI.h"
 
@@ -23,8 +22,7 @@ extern "C"
         SafetyStart();
 
         // Initialize the tasks
-       // PiUIInit();
-        
+
         //  UIInit();
         MotorControlInit();
         WifiInit();
@@ -33,7 +31,6 @@ extern "C"
         // Start the tasks
         vTaskDelay(pdMS_TO_TICKS(5000));
         CmdAndTlmStart();
-       // PiUIStart();
         // UIStart();
 
         // Energize the CNC last

@@ -145,6 +145,7 @@ void StepperMotor::GetTlm(motor_tlm_t *Tlm)
 
     Tlm->Position_deg = steps * m_StepSize_deg + m_AngleOffset_deg;
     Tlm->Speed_degps = m_CurrentSpeed_degps;
+    Tlm->TargetSpeed_degps = m_TargetSpeed_degps;
 }
 
 void StepperMotor::SetAccelLimit(float AccelLimit_degps2)

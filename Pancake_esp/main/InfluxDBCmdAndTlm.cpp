@@ -423,16 +423,22 @@ void AggregateTlmTask(void *Parameters)
             AddDataToBuffer("S0_Pos_deg", "data", TelemetryData.S0MotorTlm.Position_deg, timeStamp);
             AddDataToBuffer("S0_Speed_degps", "data", TelemetryData.S0MotorTlm.Speed_degps,
                             timeStamp);
+            AddDataToBuffer("S0_TargetSpeed_degps", "data", TelemetryData.S0MotorTlm.TargetSpeed_degps,
+                            timeStamp);
 
             AddDataToBuffer("S1_LimitSwitch", "data", TelemetryData.S1LimitSwitch, timeStamp);
             AddDataToBuffer("S1_Pos_deg", "data", TelemetryData.S1MotorTlm.Position_deg, timeStamp);
             AddDataToBuffer("S1_Speed_degps", "data", TelemetryData.S1MotorTlm.Speed_degps,
+                            timeStamp);
+            AddDataToBuffer("S1_TargetSpeed_degps", "data", TelemetryData.S1MotorTlm.TargetSpeed_degps,
                             timeStamp);
 
             // AddDataToBuffer("Pump_Pos_deg", "data", TelemetryData.PumpMotorTlm.Position_deg,
             // timeStamp);
             AddDataToBuffer("Pump_Speed_degps", "data", TelemetryData.PumpMotorTlm.Speed_degps,
                             timeStamp);
+            AddDataToBuffer("Pump_TargetSpeed_degps", "data",
+                            TelemetryData.PumpMotorTlm.TargetSpeed_degps, timeStamp);
         }
         
         vTaskDelay(bufferAddPeriod_Ticks);
