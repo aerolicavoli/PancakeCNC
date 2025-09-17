@@ -1,45 +1,45 @@
 # Pump speed test program 
 
 # Start by asserting CNC settings
-SetMotorLimits motor=S0 accel=1600.0 speed=50.0
-SetMotorLimits motor=S1 accel=1600.0 speed=50.0
-SetMotorLimits motor=Pump accel=800.0 speed=50.0
+SetMotorLimits motor=S0 accel=10000.0 speed=50.0
+SetMotorLimits motor=S1 accel=10000.0 speed=50.0
+SetMotorLimits motor=Pump accel=800.0 speed=400.0
 set_pump_constant pumpConstant_degpm=100000.0
 
 ask_to_continue
 
 # Run the pump
-pump_purge duration_ms=15000 pumpSpeed_degps=80
+pump_purge duration_ms=1500 pumpSpeed_degps=300
 
 ask_to_continue
 
 # Go to top left corner
-cnc_jog LinearSpeed_mps=0.002 TargetX_m=-0.1 TargetY_m=0.2 PumpOn=0
+cnc_jog LinearSpeed_mps=0.012 TargetX_m=-0.18 TargetY_m=0.2 PumpOn=0
 
 ask_to_continue
 
 # Jog right
-cnc_jog LinearSpeed_mps=0.002 TargetX_m=0.1 TargetY_m=0.2 PumpOn=1
+cnc_jog LinearSpeed_mps=0.012 TargetX_m=0.18 TargetY_m=0.2 PumpOn=1
 
 ask_to_continue
 # Step down
-cnc_jog LinearSpeed_mps=0.002 TargetX_m=0.1 TargetY_m=0.15 PumpOn=0
+cnc_jog LinearSpeed_mps=0.012 TargetX_m=0.18 TargetY_m=0.18 PumpOn=0
 
 # Job left
-cnc_jog LinearSpeed_mps=0.002 TargetX_m=-0.1 TargetY_m=0.15 PumpOn=1
+cnc_jog LinearSpeed_mps=0.012 TargetX_m=-0.18 TargetY_m=0.18 PumpOn=1
 
 ask_to_continue
 # Step down
-cnc_jog LinearSpeed_mps=0.002 TargetX_m=-0.1 TargetY_m=0.1 PumpOn=0
+cnc_jog LinearSpeed_mps=0.012 TargetX_m=-0.18 TargetY_m=0.16 PumpOn=0
 
 
 # Jog right
-cnc_jog LinearSpeed_mps=0.002 TargetX_m=0.1 TargetY_m=0.1 PumpOn=1
+cnc_jog LinearSpeed_mps=0.012 TargetX_m=0.18 TargetY_m=0.16 PumpOn=1
 
 ask_to_continue
 
 # Step down
-cnc_jog LinearSpeed_mps=0.002 TargetX_m=0.1 TargetY_m=0.05 PumpOn=0
+cnc_jog LinearSpeed_mps=0.012 TargetX_m=0.18 TargetY_m=0.14 PumpOn=0
 
 # Job left
-cnc_jog LinearSpeed_mps=0.002 TargetX_m=-0.1 TargetY_m=0.05 PumpOn=1
+cnc_jog LinearSpeed_mps=0.012 TargetX_m=-0.18 TargetY_m=0.14 PumpOn=1

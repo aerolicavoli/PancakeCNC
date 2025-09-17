@@ -7,6 +7,7 @@
 #include "esp_log.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
+#include "driver/gpio.h"
 
 #include "defines.h"
 #include "Telemetry.h"

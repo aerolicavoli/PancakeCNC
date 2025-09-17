@@ -9,7 +9,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "sys/time.h"
-
+#include "defines.h"
 #include "Secret.h"
 #include "WifiHandler.h"
 #include "Telemetry.h"
