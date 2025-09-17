@@ -263,13 +263,12 @@ void QueryCmdTask(void *Parameters)
             // INFLUXDB_URL should be like "https://host:8086"
             snprintf(url, sizeof(url), "%s/api/v2/query?org=%s", INFLUXDB_URL, INFLUXDB_ORG);
 
-            esp_http_client_config_t httpConfig = {
-                .url = url,
-                .method = HTTP_METHOD_POST,
-                .timeout_ms = 10000,
-                .event_handler = _http_event_handler,
-                .skip_cert_common_name_check = true, 
-            };
+            esp_http_client_config_t httpConfig = {};
+            httpConfig.url = url;
+            httpConfig.method = HTTP_METHOD_POST;
+            httpConfig.timeout_ms = 10000;
+            httpConfig.event_handler = _http_event_handler;
+            httpConfig.skip_cert_common_name_check = true;
             CmdHttpClient = esp_http_client_init(&httpConfig);
 
             char authHeader[160];
@@ -341,11 +340,10 @@ void TransmitTlmTask(void *Parameters)
             char url[512];
             snprintf(url, sizeof(url), "%s/api/v2/write?bucket=%s&precision=ms", INFLUXDB_URL, INFLUXDB_TLM_BUCKET);
 
-            esp_http_client_config_t httpConfig = {
-                .url = url,
-                .method = HTTP_METHOD_POST,
-                .skip_cert_common_name_check = true,
-            };
+            esp_http_client_config_t httpConfig = {};
+            httpConfig.url = url;
+            httpConfig.method = HTTP_METHOD_POST;
+            httpConfig.skip_cert_common_name_check = true;
 
             TlmHttpClient = esp_http_client_init(&httpConfig);
 
