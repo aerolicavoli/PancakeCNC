@@ -60,6 +60,7 @@ CNC_OPCODES: Dict[str, int] = {
     "set_pump_constant": 0x17,
     "cnc_arc": 0x18,
     "pump_purge": 0x19,
+    "set_accel_scale": 0x1A,
 }
 
 # Immediate control opcodes
@@ -105,6 +106,7 @@ def print_help() -> None:
     print("  wait timeout_ms=<int>")
     print("  set_motor_limits motor=<S0|S1|Pump|All> accel=<degps2> speed=<degps>")
     print("  set_pump_constant pumpConstant_degpm=<val>")
+    print("  set_accel_scale accelScale=<ratio>")
     print("  pause | resume | stop")
     print("  ask_to_continue [message]")
     print("  terminal_wait duration_ms=<int>")
@@ -164,6 +166,10 @@ COMMAND_HELP: Dict[str, str] = {
         "set_pump_constant keys:\n"
         "  pumpConstant_degpm: float"
     ),
+    "set_accel_scale": (
+        "set_accel_scale keys:\n"
+        "  accelScale: float — fraction of accel limit to apply"
+    ),
     "pump_purge": (
         "pump_purge keys:\n"
         "  pumpSpeed_degps: float (deg/s)\n"
@@ -196,6 +202,7 @@ CMD_ALIASES: Dict[str, str] = {
     "CNC_Arc": "cnc_arc",
     "SetMotorLimits": "set_motor_limits",
     "SetPumpConstant": "set_pump_constant",
+    "SetAccelScale": "set_accel_scale",
     "PumpPurge": "pump_purge",
 }
 
@@ -296,6 +303,14 @@ def _build_cnc_payload(cmd: str, args: Dict[str, Any]) -> Tuple[int, bytes]:
         if unknown:
             raise ValueError(f"Unknown keys for set_pump_constant: {', '.join(sorted(unknown))}")
         val = float(args.get("pumpConstant_degpm", 0.0))
+        payload = struct.pack("<f", val)
+        return op, payload
+    elif cmd == "set_accel_scale":
+        allowed = {"accelScale"}
+        unknown = set(args.keys()) - allowed
+        if unknown:
+            raise ValueError(f"Unknown keys for set_accel_scale: {', '.join(sorted(unknown))}")
+        val = float(args.get("accelScale", 0.0))
         payload = struct.pack("<f", val)
         return op, payload
     elif cmd == "cnc_jog":
@@ -517,6 +532,7 @@ def main() -> None:
             "wait",
             "set_motor_limits",
             "set_pump_constant",
+            "set_accel_scale",
             "cnc_jog",
             "cnc_arc",
             "pump_purge",
@@ -545,6 +561,7 @@ def main() -> None:
             "wait": ["timeout_ms"],
             "set_motor_limits": ["motor", "accel", "speed"],
             "set_pump_constant": ["pumpConstant_degpm"],
+            "set_accel_scale": ["accelScale"],
             "cnc_jog": ["TargetX_m", "TargetY_m", "LinearSpeed_mps", "PumpOn"],
             "cnc_arc": ["StartTheta_rad", "EndTheta_rad", "Radius_m", "LinearSpeed_mps", "CenterX_m", "CenterY_m"],
             "pump_purge": ["pumpSpeed_degps", "duration_ms"],

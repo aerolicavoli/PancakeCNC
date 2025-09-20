@@ -84,7 +84,6 @@ void MotorControlTask(void *Parameters)
     const int motorUpdatePeriod_Ticks = pdMS_TO_TICKS(MOTOR_CONTROL_PERIOD_MS);
 
     // Control parms
-    const float kp_hz(1.0e+0);
     static float pumpConstant_degpm = 1.0e5f;
     static float accelScale = 0.01f;
     const float posTol_m(1.0);
@@ -243,7 +242,7 @@ void MotorControlTask(void *Parameters)
             if (xQueueReceive(cmd_queue_cnc, &decoded, 0) == pdTRUE)
             {
                 size_t payloadLength = decoded.instruction_length;
-                if (payloadLength > CMD_PAYLOAD_MAX_LEN)
+                if (payloadLength > CMD_INSTRUCTION_PAYLOAD_MAX_LEN)
                 {
                     ESP_LOGE(TAG, "Payload too large: %u", (unsigned)payloadLength);
                     continue;
