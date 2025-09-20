@@ -4,6 +4,7 @@
 #include <time.h>
 
 #define CMD_PAYLOAD_MAX_LEN 256
+#define CMD_INSTRUCTION_PAYLOAD_MAX_LEN (CMD_PAYLOAD_MAX_LEN - 2)
 
 typedef struct {
     time_t timestamp;
