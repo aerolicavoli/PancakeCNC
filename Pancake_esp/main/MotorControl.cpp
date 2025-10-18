@@ -386,7 +386,7 @@ void MotorControlTask(void *Parameters)
         if (!EStopActive && !instructionComplete && currentGuidance != nullptr)
         {
             instructionComplete = currentGuidance->GetTargetPosition(
-                MOTOR_CONTROL_PERIOD_MS, Pos_m, Target_m, cmdViaAngle, S0CmdSpeed_degps, S1CmdSpeed_degps);
+                MOTOR_CONTROL_PERIOD_MS, Target_m, Target_m, cmdViaAngle, S0CmdSpeed_degps, S1CmdSpeed_degps);
         }
         else
         {
