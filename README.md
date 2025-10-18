@@ -1,109 +1,121 @@
-
 # PancakeCNC
 
-Source code, mechanical designs, and electrical schematics developed for the purpose of printing a pancake.
+A fully custom, pancake-printing CNC platform. This repository collects the mechanical CAD, controller electronics, firmware, ground station tooling, and reference simulations that work together to lay down batter in precise paths.
 
 ## Table of Contents
+- [Project Overview](#project-overview)
+- [Repository Layout](#repository-layout)
+- [Mechanical Platform](#mechanical-platform)
+- [Electronics and PCB](#electronics-and-pcb)
+- [Firmware (`Pancake_esp`)](#firmware-pancake_esp)
+- [Ground Station Tools](#ground-station-tools)
+- [Simulation & Analysis](#simulation--analysis)
+- [Design Documentation](#design-documentation)
+- [Command & Telemetry Protocol](#command--telemetry-protocol)
+- [Development Environment](#development-environment)
+- [License](#license)
 
-- [About the Project](#about-the-project)
-- [System Architecture](#system-architecture)
-- [Generic Instruction Protocol](#generic-instruction-protocol)
+## Project Overview
+PancakeCNC is a learning platform for end-to-end mechatronics: mechanical design, PCB layout, embedded firmware, networking, and motion control. The goal is to dispense pancake batter using precise CNC motion profiles driven from a custom controller and cloud-connected command stream.
 
----
+## Repository Layout
+```
+ControllerPCB/   KiCad project files for the controller board and manufacturing assets.
+DesignDocs/      Engineering notes, diagrams, and BOMs.
+GroundStation/   Python-based tooling for sending CNC commands and replaying G-code.
+PancakeSim/      MATLAB scripts for kinematic studies and controller validation.
+Pancake_esp/     ESP-IDF firmware for the ESP32-S3 based controller.
+```
 
-## About the Project
+## Mechanical Platform
+Motion is handled by a double-jointed planar arm that provides two rotational degrees of freedom so the dispenser can reach any point in the intended print envelope. Batter is metered with a peristaltic pump mounted at the arm's end effector.
 
-Pancake CNC was built to learn and expand my capabilities in system design, PCB design, low level code, kinematics, and control.
+The printable CAD for the hinges and pump assembly is currently tracked outside this repository; the focus here is on the control stack that drives the mechanism.
 
-## System Architecture
+## Electronics and PCB
+The `ControllerPCB` directory captures the KiCad design for the controller enclosure. Highlights include:
 
-Many, but not all facets of this design are controlled in this repository.
+- ESP32-S3 compute module, GPIO breakout, and headers that feed external step/dir motor drivers sourced from the BOM.
+- Power conditioning and 5 V level shifting for peripheral interfaces.
+- Ready-to-fabricate assets: schematic (`ControllerPCB.kicad_sch`), layout (`ControllerPCB.kicad_pcb`), and generated BOM/gerbers.
 
-### CNC Structure
+## Firmware (`Pancake_esp`)
+Firmware is built with ESP-IDF and lives under `Pancake_esp/`. Key modules:
 
-The motors, gearing, hinge, and pump mechanisms.
+- **Command Handling** (`CommandHandler.*`, `CNCOpCodes.h`): parses high-level instructions into motion primitives.
+- **Motion Control** (`MotorControl.*`, `StepperMotor.*`, `TrapezoidalJog.*`, `ArchimedeanSpiral.*`): generates coordinated movements for the S0/S1 axes and pump.
+- **Networking & Telemetry** (`InfluxDBCmdAndTlm.*`, `Telemetry.*`, `WifiHandler.*`): streams commands from InfluxDB and publishes runtime state.
+- **Safety & UI** (`Safety.*`, `UI.*`): implements interlocks and emergency stop logic. A dedicated human interface is still a work in progress—commands flow through the InfluxDB bridge today.
 
-#### Printed Parts
+To build the firmware you will need the ESP-IDF toolchain (v5.x recommended). After configuring credentials in `sdkconfig`/`Secret.h`, standard `idf.py build flash monitor` targets apply.
 
-Checked into this repository are the following components
+## Ground Station Tools
+`GroundStation/CommandTerminal.py` is a CLI utility for sending commands through InfluxDB using a human-readable syntax. Example interactions:
 
-- Peristaltic pump components
-  - PumpBase.stl
-  - PumpTop.stl
-  - PumpSpinner.stl
-- Hinge Components
-  - (Not checked in) UpperHinge.stl
-  - (Not checked in) LowerHinge.stl
+```bash
+python GroundStation/CommandTerminal.py e "Hello Pancake"
+python GroundStation/CommandTerminal.py cnc_spiral CenterX_m=0.2 LinearSpeed_mps=0.05
+python GroundStation/CommandTerminal.py run_file GroundStation/GCode/TestProgram.txt
+```
 
-### Controller Box
+Environment variables must be set to connect to InfluxDB:
 
-The controller box houses the compute, motor driver, and user interface elements.
+- `INFLUXDB_URL`
+- `INFLUXDB_TOKEN`
+- `INFLUXDB_ORG`
+- `INFLUXDB_CMD_BUCKET`
 
-#### ControllerPCB
+`GroundStation/GCode/` contains sample programs for testing complex pours.
 
-Houses an ESP32-s3, power conditioning, 5v level shifting, and general GPIO breakout.
+## Simulation & Analysis
+`PancakeSim/KinematicTestBed.m` is a MATLAB script for exercising the inverse kinematics and closed-loop control algorithms before they are deployed to hardware.
 
-## Generic Instruction Protocol
+## Design Documentation
+`DesignDocs/` aggregates system-level context:
 
-The **Generic Instruction Protocol** defines how commands are encoded and transmitted to the CNC system.  
+- `DesignDiagrams.drawio` — block diagrams and signal flows.
+- `BillOfMaterials.md` — hardware inventory and sourcing notes.
+- `Channelization.md` — signal/channel mapping across subsystems.
 
-Each message payload follows this structure:
+## Command & Telemetry Protocol
+Commands are binary packets exchanged through InfluxDB and consumed by the firmware.
 
----
+### Frame Layout
+| Byte Index | Field | Size | Description |
+|------------|-------|------|-------------|
+| `[0]` | **Op Code** | 1 byte | Instruction identifier |
+| `[1]` | **Length** | 1 byte | Number of payload bytes (*n*) |
+| `[2..n+1]` | **Payload** | *n* bytes | Instruction-specific data |
 
-### Message Layout
+### Firmware Opcodes
+Immediate commands bypass the CNC queue:
 
-| Byte Index | Field Name             | Size      | Description                                |
-|------------|------------------------|-----------|--------------------------------------------|
-| `[0]`      | **Op Code**            | 1 byte    | Identifies the instruction type            |
-| `[1]`      | **Instruction Length** | 1 byte    | Number of bytes in the instruction payload |
-| `[2..n+1]` | **Instruction Data**   | *n* bytes | Instruction payload                        |
+- `0x01` — `pause`
+- `0x02` — `resume`
+- `0x03` — `stop`
+- `0x69` — `echo`
 
-Message Layout:
-[0] : Op Code (identifies the instruction type)
-[1] : Length of the instruction payload (n)
-[2..] : Instruction data (n bytes)
+Queued motion & configuration commands include:
 
+- `0x11` — `cnc_spiral`
+- `0x12` — `cnc_jog`
+- `0x13` — `wait`
+- `0x14` — `cnc_sine`
+- `0x15` — `cnc_constant_speed`
+- `0x16` — `set_motor_limits`
+- `0x17` — `set_pump_constant`
+- `0x18` — `cnc_arc`
+- `0x19` — `pump_purge`
 
----
+Payloads are little-endian C structs (refer to headers under `Pancake_esp/main/`). The CLI automatically translates key-value inputs into the correct binary layouts.
 
-### Opcodes
+### Round-Trip Testing
+`GroundStation/RoundtripTest.py` can send a command and fetch the recorded response, verifying connectivity and serialization. If environment variables are missing it will attempt to source `Secret.sh`.
 
-| Op Code | Meaning                  |
-|---------|--------------------------|
-| `0x01`  | CNC Emergency Stop       |
-| `0x02`  | CNC Resume               |
-| `0x03`  | CNC Wait Command         |
-| `0x04`  | CNC Spiral Command       |
-| `0x05`  | CNC Jog Command          |
-| `0x06`–`0x44` | **Reserved / Unused** |
-| `0x45`  | Echo Payload             |
+## Development Environment
+- **Firmware**: ESP-IDF (requires Python, CMake, Ninja). Install dependencies per Espressif documentation.
+- **Ground Station**: Python 3.10+. Install requirements (if a `requirements.txt` is added) or run directly with the standard library and `influxdb-client`.
+- **Mechanical/Electrical CAD**: KiCad 7.x for PCB edits, CAD/CAM packages for STL manipulation.
 
----
-
-### Execution Rules
-
-- **Immediate Execution**  
-  The following opcodes are executed immediately when received, bypassing the CNC command queue:
-  - `0x01` (Emergency Stop)  
-  - `0x02` (Resume)  
-  - `0x03` (Wait Command)  
-  - `0x45` (Echo Payload)  
-
-- **Queued Execution**  
-  All other opcodes are pushed onto the **CNC Command Queue**.  
-  - The queue ensures **sequential execution**: only one instruction is active at a time.  
-  - A new instruction will not begin until the previous one has fully completed (e.g., CNC finishes its motion).  
-  - This guarantees **deterministic command flow** and prevents overlapping motions.  
-
----
-
-### Example Payload
-
-An example message encoding `0x04` (CNC Spiral Command) with 3 bytes of instruction data:
-
-0x04 0x03 0xAA 0xBB 0xCC
-
-- `0x04` → Spiral Command opcode  
-- `0x03` → Length of instruction payload (`n = 3`)  
-- `0xAA 0xBB 0xCC` → Instruction-specific data  
+## License
+This project is currently distributed without an explicit license; treat the assets as freely reusable unless noted otherwise in specific subdirectories.
