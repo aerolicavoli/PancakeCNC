@@ -40,7 +40,7 @@ void CommandHandlerInit(void)
 static void handle_command(const decoded_cmd_payload_t &cmd)
 {
     // Expect at least opcode/len
-    if (cmd.instruction_length > CMD_PAYLOAD_MAX_LEN) {
+    if (cmd.instruction_length > CMD_INSTRUCTION_PAYLOAD_MAX_LEN) {
         ESP_LOGE(TAG, "Instruction length too large: %u", cmd.instruction_length);
         return;
     }
@@ -116,6 +116,12 @@ void CommandHandlerTask(void *param)
 
             decoded.opcode = decoded.instructions[0];
             uint8_t payload_len = decoded.instructions[1];
+            if (payload_len > CMD_INSTRUCTION_PAYLOAD_MAX_LEN)
+            {
+                ESP_LOGE(TAG, "Instruction length too large: %u", payload_len);
+                continue;
+            }
+
             if (payload_len > out_len - 2)
             {
                 ESP_LOGE(TAG, "Invalid instruction length %u for buffer %u", payload_len, (unsigned)out_len);
