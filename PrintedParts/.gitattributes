@@ -1,3 +1,0 @@
-PumpBase.stl filter=lfs diff=lfs merge=lfs -text
-PumpSpinner.stl filter=lfs diff=lfs merge=lfs -text
-PumpTop.stl filter=lfs diff=lfs merge=lfs -text
