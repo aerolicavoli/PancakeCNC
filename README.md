@@ -49,6 +49,25 @@ Firmware is built with ESP-IDF and lives under `Pancake_esp/`. Key modules:
 
 To build the firmware you will need the ESP-IDF toolchain (v5.x recommended). After configuring credentials in `sdkconfig`/`Secret.h`, standard `idf.py build flash monitor` targets apply.
 
+### Viewing ESP logs over the flash serial port (macOS)
+The firmware keeps ESP-IDF logging active on the default serial sink, so anything emitted with `ESP_LOG*` can be viewed on the same USB serial device used for flashing.
+
+1. List serial devices:
+   ```bash
+   ls /dev/cu.usb*
+   ```
+2. Open a monitor (replace the port with your device):
+   ```bash
+   idf.py -p /dev/cu.usbmodemXXXX monitor
+   ```
+   If you are outside an ESP-IDF shell, a simple fallback is:
+   ```bash
+   screen /dev/cu.usbmodemXXXX 115200
+   ```
+3. Exit monitor:
+   - `idf.py monitor`: press `Ctrl+]`
+   - `screen`: press `Ctrl+A`, then `K`, then `Y`
+
 ## Ground Station Tools
 `GroundStation/CommandTerminal.py` is a CLI utility for sending commands through InfluxDB using a human-readable syntax. Example interactions:
 

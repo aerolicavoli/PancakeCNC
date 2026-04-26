@@ -9,6 +9,7 @@
 #include "freertos/portmacro.h"
 
 static const char *TAG = "InfluxDBCmdAndTlm";
+static vprintf_like_t PreviousLogVprintf = nullptr;
 
 SemaphoreHandle_t TlmBufferMutex = nullptr;
 
@@ -170,12 +171,27 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt) {
 
 static int InfluxVprintf(const char *str, va_list args)
 {
+    va_list args_for_serial;
+    va_copy(args_for_serial, args);
+
     char logBuffer[LOG_MSG_MAX_LEN];
     int len = vsnprintf(logBuffer, sizeof(logBuffer), str, args);
     if (len > 0) {
         size_t payloadLength = (len < sizeof(logBuffer)) ? (size_t)len : sizeof(logBuffer) - 1;
         // Push to lightweight ring; do not call ESP_LOG* or FreeRTOS APIs here
         log_ring_push(logBuffer, payloadLength);
+    }
+
+    // Preserve default ESP-IDF logging sink (UART/JTAG) so logs remain visible
+    // on the same serial connection used for flashing/monitoring.
+    int serial_len = 0;
+    if (PreviousLogVprintf != nullptr) {
+        serial_len = PreviousLogVprintf(str, args_for_serial);
+    }
+    va_end(args_for_serial);
+
+    if (serial_len > len) {
+        return serial_len;
     }
     return len;
 }
@@ -237,8 +253,8 @@ void CmdAndTlmStart(void)
     xTaskCreate(AggregateTlmTask, "TlmAggregate", 8192, NULL, 1, &AggregateTlmTaskHandle);
     xTaskCreate(QueryCmdTask, "CmdQuery", 8192, NULL, 1, &QueryCmdsTaskHandle);
 
-    // Enable log capture to ring buffer
-    esp_log_set_vprintf(InfluxVprintf);
+    // Enable log capture to ring buffer and keep the prior UART/JTAG sink active.
+    PreviousLogVprintf = esp_log_set_vprintf(InfluxVprintf);
     CommandHandlerStart();
 }
 
