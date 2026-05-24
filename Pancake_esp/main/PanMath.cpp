@@ -96,6 +96,10 @@ MathErrorCodes CartToAng(float &S0Ang_deg, float &S1Ang_deg, Vector2D Pos_m)
     return E_OK;
 }
 
+float GetMinReach_m() { return C_MIN_REACH_m; }
+
+float GetMaxReach_m() { return C_MAX_REACH_m; }
+
 /*
 
 global stage0Length_m stage1Length_m

@@ -2,6 +2,7 @@
 #include "CommandHandler.h"
 #include "JogGuidance.h"
 #include "ArcGuidance.h"
+#include "RectangleGuidance.h"
 #include "CNCOpCodes.h"
 
 #include <cstring>
@@ -111,6 +112,7 @@ void MotorControlTask(void *Parameters)
     ConstantSpeed constantSpeed;
     JogGuidance jogGuidance;
     ArcGuidance arcGuidance;
+    RectangleGuidance rectangleGuidance;
 
     GeneralGuidance *currentGuidance = nullptr;
 
@@ -308,6 +310,24 @@ void MotorControlTask(void *Parameters)
                         {
                             ESP_LOGE(TAG, "Invalid arc payload length: expected %u got %u",
                                      (unsigned)sizeof(ArcConfig), (unsigned)payloadLength);
+                        }
+                        break;
+                    }
+                    case CNC_RECTANGLE_OPCODE:
+                    {
+                        if (payloadLength == sizeof(RectangleConfig))
+                        {
+                            RectangleConfig cfg{};
+                            memcpy(&cfg, payload, sizeof(cfg));
+                            rectangleGuidance.ApplyConfig(cfg);
+                            currentGuidance = &rectangleGuidance;
+                            pumpThisMode = true;
+                            configApplied = true;
+                        }
+                        else
+                        {
+                            ESP_LOGE(TAG, "Invalid rectangle payload length: expected %u got %u",
+                                     (unsigned)sizeof(RectangleConfig), (unsigned)payloadLength);
                         }
                         break;
                     }
