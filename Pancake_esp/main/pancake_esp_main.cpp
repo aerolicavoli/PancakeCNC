@@ -4,6 +4,7 @@
 #include "MotorControl.h"
 #include "WifiHandler.h"
 #include "InfluxDBCmdAndTlm.h"
+#include "CrashDebug.h"
 
 extern "C"
 {
@@ -13,6 +14,7 @@ extern "C"
 
     void app_main(void)
     {
+        CrashDebugPrintResetReason();
         ESP_LOGI("TO1P", "Free heap: %lu bytes", esp_get_free_heap_size());
 
         esp_log_level_set("wifi", ESP_LOG_WARN);
@@ -30,7 +32,9 @@ extern "C"
 
         // Start the tasks
         vTaskDelay(pdMS_TO_TICKS(5000));
+        CrashDebugPrintResetReason();
         CmdAndTlmStart();
+        CrashDebugPrintResetReason();
         // UIStart();
 
         // Energize the CNC last
