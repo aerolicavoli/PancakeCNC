@@ -1,5 +1,21 @@
 #include "PanMath.h"
 
+namespace
+{
+float ClampUnitRange(float value)
+{
+    if (value > 1.0f)
+    {
+        return 1.0f;
+    }
+    if (value < -1.0f)
+    {
+        return -1.0f;
+    }
+    return value;
+}
+} // namespace
+
 /*
            Y-axis
               ^
@@ -87,12 +103,14 @@ MathErrorCodes CartToAng(float &S0Ang_deg, float &S1Ang_deg, Vector2D Pos_m)
     // Convert the triangle's inner angles to motor positions
     // TODO, add criteria to select for which of the two solutions to use.
 
-    S0Ang_deg = (targetAng_rd + acos((C_S0L2_MINUS_S1L2_m2 + targetDistSquared_m2) /
-                                     (2.0 * C_S0Length_m * targetDist_m))) *
-                C_RADToDEG;
+    float s0CosArg = (C_S0L2_MINUS_S1L2_m2 + targetDistSquared_m2) /
+                     (2.0f * C_S0Length_m * targetDist_m);
+    float s1CosArg =
+        (C_S0L2_PLUS_S1L2_m2 - targetDistSquared_m2) * C_Inv_2_TIMES_S0L_TIMES_S1L_1pm2;
+
+    S0Ang_deg = (targetAng_rd + acosf(ClampUnitRange(s0CosArg))) * C_RADToDEG;
     S1Ang_deg =
-        (acos((C_S0L2_PLUS_S1L2_m2 - targetDistSquared_m2) * C_Inv_2_TIMES_S0L_TIMES_S1L_1pm2) -
-         M_PI) *
+        (acosf(ClampUnitRange(s1CosArg)) - M_PI) *
         C_RADToDEG;
     return E_OK;
 }

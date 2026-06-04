@@ -4,6 +4,7 @@
 #include "ArcGuidance.h"
 #include "RectangleGuidance.h"
 #include "CNCOpCodes.h"
+#include "MotionSafety.h"
 
 #include <cstring>
 
@@ -48,6 +49,18 @@ static float WrapAngleDeltaDeg(float angle)
     }
     return angle;
 }
+
+static int DrainCncCommandQueue()
+{
+    decoded_cmd_payload_t tmp;
+    int drained = 0;
+    while (xQueueReceive(cmd_queue_cnc, &tmp, 0) == pdTRUE)
+    {
+        drained++;
+    }
+    return drained;
+}
+
 void MotorControlInit()
 {
     // Hardware initialization
@@ -120,6 +133,8 @@ void MotorControlTask(void *Parameters)
     CNCEnabled = true;
     for (;;)
     {
+        bool forceSpeedUpdate = false;
+
         // Handle immediate control commands (Pause / Resume / Stop)
         uint8_t now_code;
         if (xQueueReceive(cmd_queue_now, &now_code, 0) == pdTRUE)
@@ -137,20 +152,25 @@ void MotorControlTask(void *Parameters)
             else if (now_code == 0x03)
             {
                 // Full stop: clear CNC queue and idle
-                EStopActive = false;
-                instructionComplete = true;
+                MotionHoldCommand stopCommand = MakeStoppedHoldCommand(
+                    Pos_m, LocalS0Tlm.Position_deg, LocalS1Tlm.Position_deg);
+
+                EStopActive = stopCommand.pauseActive;
+                instructionComplete = stopCommand.instructionComplete;
                 currentGuidance = nullptr;
-                cmdViaAngle = true;
-                S0CmdSpeed_degps = 0.0f;
-                S1CmdSpeed_degps = 0.0f;
-                pumpSpeed_degps = 0.0f;
-                Target_m = Pos_m;
-                // Drain CNC queue
-                decoded_cmd_payload_t tmp;
-                int drained = 0;
-                while (xQueueReceive(cmd_queue_cnc, &tmp, 0) == pdTRUE) {
-                    drained++;
-                }
+                pumpThisMode = false;
+                PumpPurgeActive = false;
+                PumpPurgeRemaining_ms = 0;
+                cmdViaAngle = stopCommand.cmdViaAngle;
+                Target_m = stopCommand.target_m;
+                targetS0_deg = stopCommand.targetS0_deg;
+                targetS1_deg = stopCommand.targetS1_deg;
+                S0CmdSpeed_degps = stopCommand.s0CmdSpeed_degps;
+                S1CmdSpeed_degps = stopCommand.s1CmdSpeed_degps;
+                pumpSpeed_degps = stopCommand.pumpSpeed_degps;
+                forceSpeedUpdate = stopCommand.forceSpeedUpdate;
+
+                int drained = stopCommand.clearCommandQueue ? DrainCncCommandQueue() : 0;
                 ESP_LOGW(TAG, "Stop: cleared %d queued commands", drained);
             }
         }
@@ -416,6 +436,8 @@ void MotorControlTask(void *Parameters)
             S1CmdSpeed_degps = 0.0f;
             pumpSpeed_degps = 0.0f;
             Target_m = Pos_m;
+            targetS0_deg = LocalS0Tlm.Position_deg;
+            targetS1_deg = LocalS1Tlm.Position_deg;
         }
 
         if (!instructionComplete && !EStopActive && cmdViaAngle)
@@ -431,33 +453,52 @@ void MotorControlTask(void *Parameters)
             if (cartToAngRet != E_OK)
             {
                 const char *reason = (cartToAngRet == E_UNREACHABLE_TOO_CLOSE) ? "close" : "far";
-                ESP_LOGE(TAG, "Unreachable target position %.2f X %.2f Y is too %s. Idling",
+                ESP_LOGE(TAG, "Unreachable target position %.2f X %.2f Y is too %s. Stopping",
                          Target_m.x, Target_m.y, reason);
-                // Abort current instruction and idle
-                instructionComplete = true;
-                cmdViaAngle = true;
+                MotionHoldCommand stopCommand = MakeStoppedHoldCommand(
+                    Pos_m, LocalS0Tlm.Position_deg, LocalS1Tlm.Position_deg);
+
+                EStopActive = stopCommand.pauseActive;
+                instructionComplete = stopCommand.instructionComplete;
                 currentGuidance = nullptr;
-                S0CmdSpeed_degps = 0.0f;
-                S1CmdSpeed_degps = 0.0f;
-                pumpSpeed_degps = 0.0f;
-                Target_m = Pos_m;
+                pumpThisMode = false;
+                PumpPurgeActive = false;
+                PumpPurgeRemaining_ms = 0;
+                cmdViaAngle = stopCommand.cmdViaAngle;
+                Target_m = stopCommand.target_m;
+                targetS0_deg = stopCommand.targetS0_deg;
+                targetS1_deg = stopCommand.targetS1_deg;
+                S0CmdSpeed_degps = stopCommand.s0CmdSpeed_degps;
+                S1CmdSpeed_degps = stopCommand.s1CmdSpeed_degps;
+                pumpSpeed_degps = stopCommand.pumpSpeed_degps;
+                forceSpeedUpdate = stopCommand.forceSpeedUpdate;
+
+                int drained = stopCommand.clearCommandQueue ? DrainCncCommandQueue() : 0;
+                ESP_LOGW(TAG, "Out-of-bounds stop: cleared %d queued commands", drained);
             }
-            // Control motor speed by assuming a constant deceleration.
-            // Solve the quadratic to find the max speed that can be decelerated
-            // over the given angle, using a configurable fraction of the motors'
-            // acceleration capability.
-            float S0AngleToGo_deg = WrapAngleDeltaDeg(targetS0_deg - LocalS0Tlm.Position_deg);
-            float s0Accel = S0Motor.GetAccelLimit() * accelScale;
-            S0CmdSpeed_degps = s0Accel * Sign(S0AngleToGo_deg) * sqrt(2.0 * fabs(S0AngleToGo_deg) / s0Accel);
+            else
+            {
+                // Control motor speed by assuming a constant deceleration.
+                // Solve the quadratic to find the max speed that can be decelerated
+                // over the given angle, using a configurable fraction of the motors'
+                // acceleration capability.
+                float S0AngleToGo_deg = WrapAngleDeltaDeg(targetS0_deg - LocalS0Tlm.Position_deg);
+                float s0Accel = S0Motor.GetAccelLimit() * accelScale;
+                S0CmdSpeed_degps =
+                    s0Accel * Sign(S0AngleToGo_deg) * sqrt(2.0 * fabs(S0AngleToGo_deg) / s0Accel);
 
-            float S1AngleToGo_deg = WrapAngleDeltaDeg(targetS1_deg - LocalS1Tlm.Position_deg);
-            float s1Accel = S1Motor.GetAccelLimit() * accelScale;
-            S1CmdSpeed_degps = s1Accel * Sign(S1AngleToGo_deg) * sqrt(2.0 * fabs(S1AngleToGo_deg) / s1Accel);
+                float S1AngleToGo_deg = WrapAngleDeltaDeg(targetS1_deg - LocalS1Tlm.Position_deg);
+                float s1Accel = S1Motor.GetAccelLimit() * accelScale;
+                S1CmdSpeed_degps =
+                    s1Accel * Sign(S1AngleToGo_deg) * sqrt(2.0 * fabs(S1AngleToGo_deg) / s1Accel);
 
-            // Control pump speed
-            pumpSpeed_degps = (!EStopActive && !instructionComplete && pumpThisMode && ((Target_m - Pos_m).magnitude() < posTol_m))
-                                  ? Vel_mps.magnitude() * pumpConstant_degpm
-                                  : 0.0;
+                // Control pump speed
+                pumpSpeed_degps =
+                    (!EStopActive && !instructionComplete && pumpThisMode &&
+                     ((Target_m - Pos_m).magnitude() < posTol_m))
+                        ? Vel_mps.magnitude() * pumpConstant_degpm
+                        : 0.0;
+            }
         }
 
         // Apply pump purge override if active
@@ -481,10 +522,10 @@ void MotorControlTask(void *Parameters)
             S0Motor.setTargetSpeed(S0CmdSpeed_degps);
             S1Motor.setTargetSpeed(S1CmdSpeed_degps);
 
-            // Process speed updates and don't force the speed change
-            S0Motor.UpdateSpeed(false);
-            S1Motor.UpdateSpeed(false);
-            PumpMotor.UpdateSpeed(false);
+            // Force speed updates only for pause/stop events; otherwise respect acceleration limits.
+            S0Motor.UpdateSpeed(EStopActive || forceSpeedUpdate);
+            S1Motor.UpdateSpeed(EStopActive || forceSpeedUpdate);
+            PumpMotor.UpdateSpeed(EStopActive || forceSpeedUpdate);
         }
         else
         {

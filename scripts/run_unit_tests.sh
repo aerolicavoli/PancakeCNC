@@ -32,6 +32,11 @@ build_and_run vector2d_test \
     "$repo_root/Tests/Vector2DTest.cpp" \
     "$repo_root/Pancake_esp/main/Vector2D.cpp"
 
+build_and_run motion_safety_test \
+    "$repo_root/Tests/MotionSafetyTest.cpp" \
+    "$repo_root/Pancake_esp/main/MotionSafety.cpp" \
+    "$repo_root/Pancake_esp/main/Vector2D.cpp"
+
 build_and_run influxdb_parser_test \
     "$repo_root/Tests/InfluxDBParserTest.cpp" \
     "$repo_root/Pancake_esp/main/InfluxDBParser.cpp"

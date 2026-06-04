@@ -1,4 +1,5 @@
 #include <cstdlib>
+#include <cmath>
 
 #include "PanMath.h"
 #include "TestHarness.h"
@@ -75,6 +76,36 @@ void TestReachabilityErrors()
     EXPECT_EQ(CartToAng(stage0_angle_deg, stage1_angle_deg, Vector2D(0.0f, 0.0f)),
               E_UNREACHABLE_TOO_CLOSE);
 }
+
+void TestReachabilityBoundaryEdges()
+{
+    float stage0_angle_deg = 0.0f;
+    float stage1_angle_deg = 0.0f;
+    Vector2D position_m;
+
+    EXPECT_EQ(CartToAng(stage0_angle_deg, stage1_angle_deg, Vector2D(0.0f, GetMaxReach_m())),
+              E_OK);
+    EXPECT_TRUE(std::isfinite(stage0_angle_deg));
+    EXPECT_TRUE(std::isfinite(stage1_angle_deg));
+    AngToCart(stage0_angle_deg, stage1_angle_deg, position_m);
+    ExpectNearlyEqual(position_m.x, 0.0f, 1.0e-4f, "max reach boundary x");
+    ExpectNearlyEqual(position_m.y, GetMaxReach_m(), 1.0e-4f, "max reach boundary y");
+
+    EXPECT_EQ(CartToAng(stage0_angle_deg, stage1_angle_deg, Vector2D(0.0f, GetMinReach_m())),
+              E_OK);
+    EXPECT_TRUE(std::isfinite(stage0_angle_deg));
+    EXPECT_TRUE(std::isfinite(stage1_angle_deg));
+    AngToCart(stage0_angle_deg, stage1_angle_deg, position_m);
+    ExpectNearlyEqual(position_m.x, 0.0f, 1.0e-4f, "min reach boundary x");
+    ExpectNearlyEqual(position_m.y, GetMinReach_m(), 1.0e-4f, "min reach boundary y");
+
+    EXPECT_EQ(CartToAng(stage0_angle_deg, stage1_angle_deg,
+                        Vector2D(0.0f, GetMaxReach_m() + 1.0e-4f)),
+              E_UNREACHABLE_TOO_FAR);
+    EXPECT_EQ(CartToAng(stage0_angle_deg, stage1_angle_deg,
+                        Vector2D(0.0f, GetMinReach_m() - 1.0e-4f)),
+              E_UNREACHABLE_TOO_CLOSE);
+}
 } // namespace
 
 int main()
@@ -83,6 +114,7 @@ int main()
     TestVelocityKinematicsMatchFiniteDifference();
     TestInverseKinematicsRoundTrips();
     TestReachabilityErrors();
+    TestReachabilityBoundaryEdges();
 
     PrintTestPassed("PanMath unit test");
     return EXIT_SUCCESS;
