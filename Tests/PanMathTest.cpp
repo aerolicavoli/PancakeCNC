@@ -77,6 +77,27 @@ void TestReachabilityErrors()
               E_UNREACHABLE_TOO_CLOSE);
 }
 
+void TestReachableRectangleCorners()
+{
+    Vector2D corners_m[4];
+
+    EXPECT_TRUE(GetReachableRectangleCorners(corners_m));
+
+    ExpectNearlyEqual(corners_m[0].x, -corners_m[1].x, 1.0e-6f, "rectangle bottom symmetry");
+    ExpectNearlyEqual(corners_m[0].y, GetMinReach_m(), 1.0e-6f, "rectangle bottom reach");
+    ExpectNearlyEqual(corners_m[1].y, GetMinReach_m(), 1.0e-6f, "rectangle opposite bottom reach");
+    ExpectNearlyEqual(corners_m[2].x, corners_m[1].x, 1.0e-6f, "rectangle right edge x");
+    ExpectNearlyEqual(corners_m[3].x, corners_m[0].x, 1.0e-6f, "rectangle left edge x");
+    ExpectNearlyEqual(corners_m[2].y, corners_m[3].y, 1.0e-6f, "rectangle top edge y");
+
+    float stage0_angle_deg = 0.0f;
+    float stage1_angle_deg = 0.0f;
+    for (Vector2D corner_m : corners_m)
+    {
+        EXPECT_EQ(CartToAng(stage0_angle_deg, stage1_angle_deg, corner_m), E_OK);
+    }
+}
+
 void TestReachabilityBoundaryEdges()
 {
     float stage0_angle_deg = 0.0f;
@@ -114,6 +135,7 @@ int main()
     TestVelocityKinematicsMatchFiniteDifference();
     TestInverseKinematicsRoundTrips();
     TestReachabilityErrors();
+    TestReachableRectangleCorners();
     TestReachabilityBoundaryEdges();
 
     PrintTestPassed("PanMath unit test");

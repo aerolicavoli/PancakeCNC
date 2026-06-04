@@ -37,6 +37,11 @@ build_and_run motion_safety_test \
     "$repo_root/Pancake_esp/main/MotionSafety.cpp" \
     "$repo_root/Pancake_esp/main/Vector2D.cpp"
 
+build_and_run go_to_angle_guidance_test \
+    "$repo_root/Tests/GoToAngleGuidanceTest.cpp" \
+    "$repo_root/Pancake_esp/main/PanMath.cpp" \
+    "$repo_root/Pancake_esp/main/Vector2D.cpp"
+
 build_and_run influxdb_parser_test \
     "$repo_root/Tests/InfluxDBParserTest.cpp" \
     "$repo_root/Pancake_esp/main/InfluxDBParser.cpp"

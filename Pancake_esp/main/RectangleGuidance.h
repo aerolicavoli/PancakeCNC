@@ -86,33 +86,11 @@ class RectangleGuidance : public GeneralGuidance
 
     bool ComputeCorners()
     {
-        float inset_m = fmaxf(Config.InsetDistance_m, 0.0f);
-        float innerRadius_m = GetMinReach_m() + inset_m;
-        float outerRadius_m = GetMaxReach_m() - inset_m;
-
-        if (outerRadius_m <= innerRadius_m || outerRadius_m <= 0.0f)
+        if (!GetReachableRectangleCorners(corners, Config.InsetDistance_m))
         {
             return false;
         }
 
-        float topY_m = (innerRadius_m + sqrtf(innerRadius_m * innerRadius_m +
-                                             8.0f * outerRadius_m * outerRadius_m)) *
-                       0.25f;
-        if (topY_m <= innerRadius_m || topY_m >= outerRadius_m)
-        {
-            return false;
-        }
-
-        float halfWidth_m = sqrtf(outerRadius_m * outerRadius_m - topY_m * topY_m);
-        if (halfWidth_m <= 0.0f)
-        {
-            return false;
-        }
-
-        corners[0] = Vector2D(-halfWidth_m, innerRadius_m);
-        corners[1] = Vector2D(halfWidth_m, innerRadius_m);
-        corners[2] = Vector2D(halfWidth_m, topY_m);
-        corners[3] = Vector2D(-halfWidth_m, topY_m);
         corners[4] = corners[0];
         return true;
     }

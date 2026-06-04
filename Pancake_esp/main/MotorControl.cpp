@@ -3,6 +3,7 @@
 #include "JogGuidance.h"
 #include "ArcGuidance.h"
 #include "RectangleGuidance.h"
+#include "GoToAngleGuidance.h"
 #include "CNCOpCodes.h"
 #include "MotionSafety.h"
 
@@ -48,6 +49,18 @@ static float WrapAngleDeltaDeg(float angle)
         angle += 360.0f;
     }
     return angle;
+}
+
+static float ComputeDecelLimitedSpeedDegps(float currentAngle_deg, float targetAngle_deg,
+                                           float accelLimit_degps2, float accelScale)
+{
+    float angleToGo_deg = WrapAngleDeltaDeg(targetAngle_deg - currentAngle_deg);
+    float accel = accelLimit_degps2 * accelScale;
+    if (accel <= 0.0f || angleToGo_deg == 0.0f)
+    {
+        return 0.0f;
+    }
+    return accel * Sign(angleToGo_deg) * sqrtf(2.0f * fabsf(angleToGo_deg) / accel);
 }
 
 static int DrainCncCommandQueue()
@@ -126,6 +139,7 @@ void MotorControlTask(void *Parameters)
     JogGuidance jogGuidance;
     ArcGuidance arcGuidance;
     RectangleGuidance rectangleGuidance;
+    GoToAngleGuidance goToAngleGuidance;
 
     GeneralGuidance *currentGuidance = nullptr;
 
@@ -351,6 +365,23 @@ void MotorControlTask(void *Parameters)
                         }
                         break;
                     }
+                    case CNC_GO_TO_ANGLE_OPCODE:
+                    {
+                        if (payloadLength == sizeof(GoToAngleConfig))
+                        {
+                            GoToAngleConfig cfg{};
+                            memcpy(&cfg, payload, sizeof(cfg));
+                            goToAngleGuidance.ApplyConfig(cfg);
+                            currentGuidance = &goToAngleGuidance;
+                            configApplied = true;
+                        }
+                        else
+                        {
+                            ESP_LOGE(TAG, "Invalid go-to-angle payload length: expected %u got %u",
+                                     (unsigned)sizeof(GoToAngleConfig), (unsigned)payloadLength);
+                        }
+                        break;
+                    }
                     case CNC_WAIT_OPCODE:
                     {
                         if (payloadLength == sizeof(WaitGuidance::WaitConfig))
@@ -442,9 +473,35 @@ void MotorControlTask(void *Parameters)
 
         if (!instructionComplete && !EStopActive && cmdViaAngle)
         {
-            pumpSpeed_degps = 0.0;
-            targetS0_deg = 0.0;
-            targetS1_deg = 0.0;
+            pumpSpeed_degps = 0.0f;
+            if (currentGuidance != nullptr && currentGuidance->GetOpCode() == CNC_GO_TO_ANGLE_OPCODE)
+            {
+                targetS0_deg = goToAngleGuidance.Config.TargetS0_deg;
+                targetS1_deg = goToAngleGuidance.Config.TargetS1_deg;
+
+                float s0AngleToGo_deg = WrapAngleDeltaDeg(targetS0_deg - LocalS0Tlm.Position_deg);
+                float s1AngleToGo_deg = WrapAngleDeltaDeg(targetS1_deg - LocalS1Tlm.Position_deg);
+                if (fabsf(s0AngleToGo_deg) <= goToAngleGuidance.Config.AngleTolerance_deg &&
+                    fabsf(s1AngleToGo_deg) <= goToAngleGuidance.Config.AngleTolerance_deg)
+                {
+                    instructionComplete = true;
+                    currentGuidance = nullptr;
+                    S0CmdSpeed_degps = 0.0f;
+                    S1CmdSpeed_degps = 0.0f;
+                }
+                else
+                {
+                    S0CmdSpeed_degps = ComputeDecelLimitedSpeedDegps(
+                        LocalS0Tlm.Position_deg, targetS0_deg, S0Motor.GetAccelLimit(), accelScale);
+                    S1CmdSpeed_degps = ComputeDecelLimitedSpeedDegps(
+                        LocalS1Tlm.Position_deg, targetS1_deg, S1Motor.GetAccelLimit(), accelScale);
+                }
+            }
+            else
+            {
+                targetS0_deg = 0.0f;
+                targetS1_deg = 0.0f;
+            }
         }
         else if (!cmdViaAngle)
         {
@@ -482,15 +539,10 @@ void MotorControlTask(void *Parameters)
                 // Solve the quadratic to find the max speed that can be decelerated
                 // over the given angle, using a configurable fraction of the motors'
                 // acceleration capability.
-                float S0AngleToGo_deg = WrapAngleDeltaDeg(targetS0_deg - LocalS0Tlm.Position_deg);
-                float s0Accel = S0Motor.GetAccelLimit() * accelScale;
-                S0CmdSpeed_degps =
-                    s0Accel * Sign(S0AngleToGo_deg) * sqrt(2.0 * fabs(S0AngleToGo_deg) / s0Accel);
-
-                float S1AngleToGo_deg = WrapAngleDeltaDeg(targetS1_deg - LocalS1Tlm.Position_deg);
-                float s1Accel = S1Motor.GetAccelLimit() * accelScale;
-                S1CmdSpeed_degps =
-                    s1Accel * Sign(S1AngleToGo_deg) * sqrt(2.0 * fabs(S1AngleToGo_deg) / s1Accel);
+                S0CmdSpeed_degps = ComputeDecelLimitedSpeedDegps(
+                    LocalS0Tlm.Position_deg, targetS0_deg, S0Motor.GetAccelLimit(), accelScale);
+                S1CmdSpeed_degps = ComputeDecelLimitedSpeedDegps(
+                    LocalS1Tlm.Position_deg, targetS1_deg, S1Motor.GetAccelLimit(), accelScale);
 
                 // Control pump speed
                 pumpSpeed_degps =

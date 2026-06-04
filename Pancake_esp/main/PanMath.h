@@ -27,5 +27,6 @@ void AngToCart(float S0Ang_deg, float S1Ang_deg, float S0Rate_degps, float S1Rat
 MathErrorCodes CartToAng(float &S0Ang_deg, float &S1Ang_deg, Vector2D Pos_m);
 float GetMinReach_m();
 float GetMaxReach_m();
+bool GetReachableRectangleCorners(Vector2D corners_m[4], float inset_m = 0.0f);
 
 #endif // PANMATH_H

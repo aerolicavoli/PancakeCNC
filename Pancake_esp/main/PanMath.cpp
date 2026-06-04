@@ -14,6 +14,11 @@ float ClampUnitRange(float value)
     }
     return value;
 }
+
+float NonNegativeInset(float inset_m)
+{
+    return (inset_m > 0.0f) ? inset_m : 0.0f;
+}
 } // namespace
 
 /*
@@ -118,6 +123,43 @@ MathErrorCodes CartToAng(float &S0Ang_deg, float &S1Ang_deg, Vector2D Pos_m)
 float GetMinReach_m() { return C_MIN_REACH_m; }
 
 float GetMaxReach_m() { return C_MAX_REACH_m; }
+
+bool GetReachableRectangleCorners(Vector2D corners_m[4], float inset_m)
+{
+    if (corners_m == nullptr)
+    {
+        return false;
+    }
+
+    float inset = NonNegativeInset(inset_m);
+    float innerRadius_m = GetMinReach_m() + inset;
+    float outerRadius_m = GetMaxReach_m() - inset;
+
+    if (outerRadius_m <= innerRadius_m || outerRadius_m <= 0.0f)
+    {
+        return false;
+    }
+
+    float topY_m =
+        (innerRadius_m + sqrtf(innerRadius_m * innerRadius_m + 8.0f * outerRadius_m * outerRadius_m)) *
+        0.25f;
+    if (topY_m <= innerRadius_m || topY_m >= outerRadius_m)
+    {
+        return false;
+    }
+
+    float halfWidth_m = sqrtf(outerRadius_m * outerRadius_m - topY_m * topY_m);
+    if (halfWidth_m <= 0.0f)
+    {
+        return false;
+    }
+
+    corners_m[0] = Vector2D(-halfWidth_m, innerRadius_m);
+    corners_m[1] = Vector2D(halfWidth_m, innerRadius_m);
+    corners_m[2] = Vector2D(halfWidth_m, topY_m);
+    corners_m[3] = Vector2D(-halfWidth_m, topY_m);
+    return true;
+}
 
 /*
 
