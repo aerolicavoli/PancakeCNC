@@ -1,0 +1,17 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Run C++ unit tests
+        run: ./scripts/run_unit_tests.sh

@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+build_dir="$repo_root/build/unit-tests"
+mkdir -p "$build_dir"
+
+cxx="${CXX:-g++}"
+common_flags=(
+    -std=c++17
+    -Wall
+    -Wextra
+    -Werror
+    -I"$repo_root/Tests"
+    -I"$repo_root/Tests/support"
+    -I"$repo_root/Pancake_esp/main"
+)
+
+build_and_run() {
+    local name="$1"
+    shift
+    "$cxx" "${common_flags[@]}" "$@" -o "$build_dir/$name"
+    "$build_dir/$name"
+}
+
+build_and_run panmath_test \
+    "$repo_root/Tests/PanMathTest.cpp" \
+    "$repo_root/Pancake_esp/main/PanMath.cpp" \
+    "$repo_root/Pancake_esp/main/Vector2D.cpp"
+
+build_and_run vector2d_test \
+    "$repo_root/Tests/Vector2DTest.cpp" \
+    "$repo_root/Pancake_esp/main/Vector2D.cpp"
+
+build_and_run influxdb_parser_test \
+    "$repo_root/Tests/InfluxDBParserTest.cpp" \
+    "$repo_root/Pancake_esp/main/InfluxDBParser.cpp"

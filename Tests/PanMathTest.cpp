@@ -1,55 +1,89 @@
-#include <cmath>
 #include <cstdlib>
-#include <iostream>
 
 #include "PanMath.h"
+#include "TestHarness.h"
 
 namespace
 {
-bool NearlyEqual(float actual, float expected, float tolerance)
+void ExpectRoundTrip(float s0_angle_deg, float s1_angle_deg)
 {
-    return std::fabs(actual - expected) <= tolerance;
+    Vector2D expected_position_m;
+    AngToCart(s0_angle_deg, s1_angle_deg, expected_position_m);
+
+    float actual_s0_angle_deg = 0.0f;
+    float actual_s1_angle_deg = 0.0f;
+    EXPECT_EQ(CartToAng(actual_s0_angle_deg, actual_s1_angle_deg, expected_position_m), E_OK);
+
+    Vector2D round_trip_position_m;
+    AngToCart(actual_s0_angle_deg, actual_s1_angle_deg, round_trip_position_m);
+
+    constexpr float kTolerance_m = 1.0e-5f;
+    ExpectNearlyEqual(round_trip_position_m.x, expected_position_m.x, kTolerance_m, "round-trip x");
+    ExpectNearlyEqual(round_trip_position_m.y, expected_position_m.y, kTolerance_m, "round-trip y");
 }
 
-void ExpectNearlyEqual(float actual, float expected, float tolerance, const char *label)
+void TestForwardKinematicsCardinalAngles()
 {
-    if (!NearlyEqual(actual, expected, tolerance))
-    {
-        std::cerr << label << " expected " << expected << " but got " << actual << '\n';
-        std::exit(EXIT_FAILURE);
-    }
+    Vector2D position_m;
+    AngToCart(0.0f, 0.0f, position_m);
+    ExpectNearlyEqual(position_m.x, 0.0f, 1.0e-6f, "fully extended x");
+    ExpectNearlyEqual(position_m.y, GetMaxReach_m(), 1.0e-6f, "fully extended y");
+
+    AngToCart(90.0f, 0.0f, position_m);
+    ExpectNearlyEqual(position_m.x, GetMaxReach_m(), 1.0e-6f, "right extended x");
+    ExpectNearlyEqual(position_m.y, 0.0f, 1.0e-6f, "right extended y");
+}
+
+void TestVelocityKinematicsMatchFiniteDifference()
+{
+    constexpr float s0_angle_deg = 35.0f;
+    constexpr float s1_angle_deg = -70.0f;
+    constexpr float s0_rate_degps = 12.5f;
+    constexpr float s1_rate_degps = -8.0f;
+    constexpr float dt_s = 1.0e-3f;
+
+    Vector2D position_m;
+    Vector2D velocity_mps;
+    AngToCart(s0_angle_deg, s1_angle_deg, s0_rate_degps, s1_rate_degps, position_m, velocity_mps);
+
+    Vector2D next_position_m;
+    AngToCart(s0_angle_deg + s0_rate_degps * dt_s, s1_angle_deg + s1_rate_degps * dt_s,
+              next_position_m);
+
+    ExpectNearlyEqual(velocity_mps.x, (next_position_m.x - position_m.x) / dt_s, 2.0e-4f,
+                      "cartesian velocity x");
+    ExpectNearlyEqual(velocity_mps.y, (next_position_m.y - position_m.y) / dt_s, 2.0e-4f,
+                      "cartesian velocity y");
+}
+
+void TestInverseKinematicsRoundTrips()
+{
+    ExpectRoundTrip(35.0f, -70.0f);
+    ExpectRoundTrip(-20.0f, -45.0f);
+    ExpectRoundTrip(80.0f, -110.0f);
+}
+
+void TestReachabilityErrors()
+{
+    float stage0_angle_deg = 0.0f;
+    float stage1_angle_deg = 0.0f;
+
+    EXPECT_EQ(CartToAng(stage0_angle_deg, stage1_angle_deg, Vector2D(0.0f, GetMaxReach_m() + 0.01f)),
+              E_UNREACHABLE_TOO_FAR);
+    EXPECT_EQ(CartToAng(stage0_angle_deg, stage1_angle_deg, Vector2D(0.0f, GetMinReach_m() - 0.01f)),
+              E_UNREACHABLE_TOO_CLOSE);
+    EXPECT_EQ(CartToAng(stage0_angle_deg, stage1_angle_deg, Vector2D(0.0f, 0.0f)),
+              E_UNREACHABLE_TOO_CLOSE);
 }
 } // namespace
 
 int main()
 {
-    Vector2D expectedPosition_m;
-    AngToCart(35.0f, -70.0f, expectedPosition_m);
+    TestForwardKinematicsCardinalAngles();
+    TestVelocityKinematicsMatchFiniteDifference();
+    TestInverseKinematicsRoundTrips();
+    TestReachabilityErrors();
 
-    float stage0Angle_deg = 0.0f;
-    float stage1Angle_deg = 0.0f;
-    MathErrorCodes result = CartToAng(stage0Angle_deg, stage1Angle_deg, expectedPosition_m);
-    if (result != E_OK)
-    {
-        std::cerr << "CartToAng reported unexpected error code " << result << '\n';
-        return EXIT_FAILURE;
-    }
-
-    Vector2D roundTripPosition_m;
-    AngToCart(stage0Angle_deg, stage1Angle_deg, roundTripPosition_m);
-
-    constexpr float kTolerance_m = 1.0e-5f;
-    ExpectNearlyEqual(roundTripPosition_m.x, expectedPosition_m.x, kTolerance_m, "round-trip x");
-    ExpectNearlyEqual(roundTripPosition_m.y, expectedPosition_m.y, kTolerance_m, "round-trip y");
-
-    Vector2D unreachablePosition_m(0.0f, GetMaxReach_m() + 0.01f);
-    result = CartToAng(stage0Angle_deg, stage1Angle_deg, unreachablePosition_m);
-    if (result != E_UNREACHABLE_TOO_FAR)
-    {
-        std::cerr << "Expected E_UNREACHABLE_TOO_FAR but got " << result << '\n';
-        return EXIT_FAILURE;
-    }
-
-    std::cout << "PanMath unit test passed\n";
+    PrintTestPassed("PanMath unit test");
     return EXIT_SUCCESS;
 }

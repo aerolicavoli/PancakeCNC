@@ -1,8 +1,0 @@
-stages:
-  - test
-
-panmath_unit_test:
-  stage: test
-  image: gcc:13.2.0
-  script:
-    - ./scripts/run_panmath_unit_test.sh

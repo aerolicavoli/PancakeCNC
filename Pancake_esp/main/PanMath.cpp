@@ -47,10 +47,11 @@ void AngToCart(float S0Ang_deg, float S1Ang_deg, float S0Rate_degps, float S1Rat
     float ct = cos(theta_rad);
     float st = sin(theta_rad);
 
-    CartVel_mps.x = S1Rate_degps * C_DEGToRAD * C_S1Length_m * cp +
-                    S0Rate_degps * C_DEGToRAD * C_S0Length_m * ct;
-    CartVel_mps.y = -1.0 * S1Rate_degps * C_DEGToRAD * C_S1Length_m * sp -
-                    S0Rate_degps * C_DEGToRAD * C_S0Length_m * st;
+    float phi_rate_radps = (S0Rate_degps + S1Rate_degps) * C_DEGToRAD;
+    float theta_rate_radps = S0Rate_degps * C_DEGToRAD;
+
+    CartVel_mps.x = phi_rate_radps * C_S1Length_m * cp + theta_rate_radps * C_S0Length_m * ct;
+    CartVel_mps.y = -1.0f * phi_rate_radps * C_S1Length_m * sp - theta_rate_radps * C_S0Length_m * st;
 
     CartPos_m.x = st * C_S0Length_m + sp * C_S1Length_m;
     CartPos_m.y = ct * C_S0Length_m + cp * C_S1Length_m;
