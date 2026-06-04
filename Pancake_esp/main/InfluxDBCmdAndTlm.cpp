@@ -2,13 +2,34 @@
 #include "InfluxDBParser.h"
 #include "CommandHandler.h"
 #include "DataModel.h"
+#include "GPIOAssignments.h"
 #include <cstring>
 #include <algorithm>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/portmacro.h"
+#include "driver/uart.h"
 
 static const char *TAG = "InfluxDBCmdAndTlm";
+static vprintf_like_t PreviousLogVprintf = nullptr;
+
+// UART2 initialization for serial communication on GPIO 11 (TX) and GPIO 13 (RX)
+static void InitializeUART2()
+{
+    uart_config_t uart_config = {
+        .baud_rate = 115200,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .rx_flow_ctrl_thresh = 122,
+    };
+    
+    ESP_ERROR_CHECK(uart_param_config(UART_NUM, &uart_config));
+    ESP_ERROR_CHECK(uart_set_pin(UART_NUM, UART_TX_PIN, UART_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+    ESP_ERROR_CHECK(uart_driver_install(UART_NUM, 1024, 1024, 0, NULL, 0));
+    ESP_LOGI(TAG, "UART2 initialized on TX=%d, RX=%d at 115200 baud", UART_TX_PIN, UART_RX_PIN);
+}
 
 SemaphoreHandle_t TlmBufferMutex = nullptr;
 
@@ -24,43 +45,59 @@ static size_t TransmitTlmBufferIdx = 0;
 #define LOG_RING_CAPACITY 32
 #define LOG_MSG_MAX_LEN   160
 
-static char LogRing[LOG_RING_CAPACITY][LOG_MSG_MAX_LEN];
-static volatile uint16_t LogHead = 0; // next write index
-static volatile uint16_t LogTail = 0; // next read index
-static portMUX_TYPE LogMux = portMUX_INITIALIZER_UNLOCKED;
+typedef struct
+{
+    char messages[LOG_RING_CAPACITY][LOG_MSG_MAX_LEN];
+    volatile uint16_t head;
+    volatile uint16_t tail;
+    portMUX_TYPE mux;
+} log_ring_t;
 
-static inline bool log_ring_empty() { return LogHead == LogTail; }
-static inline bool log_ring_full() { return (uint16_t)((LogHead + 1) % LOG_RING_CAPACITY) == LogTail; }
+static log_ring_t SerialLogRing = {
+    .messages = {},
+    .head = 0,
+    .tail = 0,
+    .mux = portMUX_INITIALIZER_UNLOCKED,
+};
 
-static inline void log_ring_push(const char *msg, size_t len)
+static log_ring_t TlmLogRing = {
+    .messages = {},
+    .head = 0,
+    .tail = 0,
+    .mux = portMUX_INITIALIZER_UNLOCKED,
+};
+
+static inline bool log_ring_empty(const log_ring_t *ring) { return ring->head == ring->tail; }
+
+static inline void log_ring_push(log_ring_t *ring, const char *msg, size_t len)
 {
     if (!msg || len == 0) return;
     if (len >= LOG_MSG_MAX_LEN) len = LOG_MSG_MAX_LEN - 1;
-    portENTER_CRITICAL(&LogMux);
-    uint16_t idx = LogHead;
-    memcpy(LogRing[idx], msg, len);
-    LogRing[idx][len] = '\0';
-    LogHead = (uint16_t)((LogHead + 1) % LOG_RING_CAPACITY);
-    if (LogHead == LogTail) {
+    portENTER_CRITICAL(&ring->mux);
+    uint16_t idx = ring->head;
+    memcpy(ring->messages[idx], msg, len);
+    ring->messages[idx][len] = '\0';
+    ring->head = (uint16_t)((ring->head + 1) % LOG_RING_CAPACITY);
+    if (ring->head == ring->tail) {
         // overwrite oldest
-        LogTail = (uint16_t)((LogTail + 1) % LOG_RING_CAPACITY);
+        ring->tail = (uint16_t)((ring->tail + 1) % LOG_RING_CAPACITY);
     }
-    portEXIT_CRITICAL(&LogMux);
+    portEXIT_CRITICAL(&ring->mux);
 }
 
-static inline bool log_ring_pop(char *out, size_t out_sz)
+static inline bool log_ring_pop(log_ring_t *ring, char *out, size_t out_sz)
 {
     if (!out || out_sz == 0) return false;
-    portENTER_CRITICAL(&LogMux);
-    if (log_ring_empty()) {
-        portEXIT_CRITICAL(&LogMux);
+    portENTER_CRITICAL(&ring->mux);
+    if (log_ring_empty(ring)) {
+        portEXIT_CRITICAL(&ring->mux);
         return false;
     }
-    uint16_t idx = LogTail;
-    LogTail = (uint16_t)((LogTail + 1) % LOG_RING_CAPACITY);
-    portEXIT_CRITICAL(&LogMux);
+    uint16_t idx = ring->tail;
+    ring->tail = (uint16_t)((ring->tail + 1) % LOG_RING_CAPACITY);
+    portEXIT_CRITICAL(&ring->mux);
 
-    strncpy(out, LogRing[idx], out_sz - 1);
+    strncpy(out, ring->messages[idx], out_sz - 1);
     out[out_sz - 1] = '\0';
     return true;
 }
@@ -69,6 +106,7 @@ static inline bool log_ring_pop(char *out, size_t out_sz)
 static TaskHandle_t AggregateTlmTaskHandle = NULL;
 static TaskHandle_t TransmitTlmTaskHandle = NULL;
 static TaskHandle_t QueryCmdsTaskHandle = NULL;
+static TaskHandle_t SerialLogTaskHandle = NULL;
 
 // Http clients
 esp_http_client_handle_t TlmHttpClient = NULL;
@@ -170,12 +208,28 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt) {
 
 static int InfluxVprintf(const char *str, va_list args)
 {
+    va_list args_for_serial;
+    va_copy(args_for_serial, args);
+
     char logBuffer[LOG_MSG_MAX_LEN];
     int len = vsnprintf(logBuffer, sizeof(logBuffer), str, args);
     if (len > 0) {
         size_t payloadLength = (len < sizeof(logBuffer)) ? (size_t)len : sizeof(logBuffer) - 1;
         // Push to lightweight ring; do not call ESP_LOG* or FreeRTOS APIs here
-        log_ring_push(logBuffer, payloadLength);
+        log_ring_push(&SerialLogRing, logBuffer, payloadLength);
+        log_ring_push(&TlmLogRing, logBuffer, payloadLength);
+    }
+
+    // Preserve default ESP-IDF logging sink (UART/JTAG) so logs remain visible
+    // on the same serial connection used for flashing/monitoring.
+    int serial_len = 0;
+    if (PreviousLogVprintf != nullptr) {
+        serial_len = PreviousLogVprintf(str, args_for_serial);
+    }
+    va_end(args_for_serial);
+
+    if (serial_len > len) {
+        return serial_len;
     }
     return len;
 }
@@ -187,20 +241,32 @@ void AddLogToBuffer(const char *message)
     gettimeofday(&tv, NULL);
     timeStamp = (int64_t)tv.tv_sec * 1000.0 + (int64_t)tv.tv_usec / 1000L;
 
+    char escapedMessage[LOG_MSG_MAX_LEN * 2];
+    size_t escapedIdx = 0;
+    for (size_t i = 0; message[i] != '\0' && escapedIdx < sizeof(escapedMessage) - 1; ++i)
+    {
+        char c = message[i];
+        if (c == '\r' || c == '\n')
+        {
+            c = ' ';
+        }
+        if ((c == '"' || c == '\\') && escapedIdx < sizeof(escapedMessage) - 2)
+        {
+            escapedMessage[escapedIdx++] = '\\';
+        }
+        escapedMessage[escapedIdx++] = c;
+    }
+    escapedMessage[escapedIdx] = '\0';
+
     xSemaphoreTake(TlmBufferMutex, portMAX_DELAY);
     int written = snprintf(
         WorkingTlmBuffer + WorkingTlmBufferIdx, BUFFER_SIZE - WorkingTlmBufferIdx,
-        "logs,level=info,source=myApp message=\"%s\",timestamp=%lld\n", message, timeStamp);
-    xSemaphoreGive(TlmBufferMutex);
-
-    if (written > 0)
-    {
-        if (WorkingTlmBufferIdx + written < BUFFER_SIZE)
+        "logs,level=info,source=myApp message=\"%s\" %lld\n", escapedMessage, timeStamp);
+    if (written > 0 && WorkingTlmBufferIdx + written < BUFFER_SIZE)
         {
             WorkingTlmBufferIdx += written;
         }
-        // else: drop silently to avoid recursive logging
-    }
+    xSemaphoreGive(TlmBufferMutex);
     // else: drop silently
 }
 
@@ -230,15 +296,40 @@ void CmdAndTlmInit(void)
     CommandHandlerInit();
 }
 
+void SerialLogTask(void *Parameters)
+{
+    char logMsg[LOG_MSG_MAX_LEN];
+    
+    for (;;)
+    {
+        // Drain up to 10 log messages per cycle to avoid stalling other tasks
+        int drained = 0;
+        while (drained < 10 && log_ring_pop(&SerialLogRing, logMsg, sizeof(logMsg)))
+        {
+            // Write to UART2 without blocking; this task runs at low priority
+            uart_write_bytes(UART_NUM, logMsg, strlen(logMsg));
+            uart_write_bytes(UART_NUM, "\n", 1);
+            ++drained;
+        }
+        
+        // Sleep briefly to allow other tasks to run
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+}
+
 void CmdAndTlmStart(void)
 {
-    // Start the tasks
-    xTaskCreate(TransmitTlmTask, "TlmTransmit", 8192, NULL, 1, &TransmitTlmTaskHandle);
-    xTaskCreate(AggregateTlmTask, "TlmAggregate", 8192, NULL, 1, &AggregateTlmTaskHandle);
-    xTaskCreate(QueryCmdTask, "CmdQuery", 8192, NULL, 1, &QueryCmdsTaskHandle);
+    // Initialize UART2 on GPIO 11/13 for direct serial output
+    InitializeUART2();
+    
+    // Start the tasks with reduced stack sizes to save memory
+    xTaskCreate(SerialLogTask, "SerialLog", 2048, NULL, 1, &SerialLogTaskHandle);
+    xTaskCreate(TransmitTlmTask, "TlmTransmit", 4096, NULL, 1, &TransmitTlmTaskHandle);
+    xTaskCreate(AggregateTlmTask, "TlmAggregate", 4096, NULL, 1, &AggregateTlmTaskHandle);
+    xTaskCreate(QueryCmdTask, "CmdQuery", 4096, NULL, 1, &QueryCmdsTaskHandle);
 
-    // Enable log capture to ring buffer
-    esp_log_set_vprintf(InfluxVprintf);
+    // Enable log capture to ring buffer and keep the prior UART/JTAG sink active.
+    PreviousLogVprintf = esp_log_set_vprintf(InfluxVprintf);
     CommandHandlerStart();
 }
 
@@ -282,7 +373,7 @@ void QueryCmdTask(void *Parameters)
         }
 
         // Attempt to query commands
-        if (false) //xSemaphoreTake(WifiAvailableSemaphore, pdMS_TO_TICKS(100)) != pdTRUE)
+        if (xSemaphoreTake(WifiAvailableSemaphore, pdMS_TO_TICKS(100)) != pdTRUE)
         {
             if (CmdHttpClient)
             {
@@ -314,6 +405,8 @@ void QueryCmdTask(void *Parameters)
         } else {
             ESP_LOGE(TAG, "HTTP POST request failed: %s", esp_err_to_name(err));
         }
+
+        xSemaphoreGive(WifiAvailableSemaphore);
     }
 }
 
@@ -356,9 +449,10 @@ void TransmitTlmTask(void *Parameters)
         // Attempt to send the telemetry data only if we copied new data
         if (has_new_data)
         {
-            if (true) //xSemaphoreTake(WifiAvailableSemaphore, pdMS_TO_TICKS(100)) == pdTRUE)
+            if (xSemaphoreTake(WifiAvailableSemaphore, pdMS_TO_TICKS(100)) == pdTRUE)
             {
                 SendDataToInflux(TransmitTlmBuffer, TransmitTlmBufferIdx);
+                xSemaphoreGive(WifiAvailableSemaphore);
             }
             else if (TlmHttpClient)
             {
@@ -393,7 +487,7 @@ void AggregateTlmTask(void *Parameters)
             const int LOG_DRAIN_MAX = 32;
             int drained = 0;
             char msg[LOG_MSG_MAX_LEN];
-            while (drained < LOG_DRAIN_MAX && log_ring_pop(msg, sizeof(msg)))
+            while (drained < LOG_DRAIN_MAX && log_ring_pop(&TlmLogRing, msg, sizeof(msg)))
             {
                 AddLogToBuffer(msg);
                 ++drained;

@@ -7,6 +7,7 @@ Simplified syntax (no leading / or -a):
   wait timeout_ms=500
   cnc_sine Amplitude_deg=10 Frequency_hz=0.25
   cnc_constant_speed S0Speed_degps=0 S1Speed_degps=45
+  cnc_rectangle InsetDistance_m=0.01 LinearSpeed_mps=0.05
 
 Run a newline-delimited program file:
   run_file TestProgram.txt
@@ -61,6 +62,7 @@ CNC_OPCODES: Dict[str, int] = {
     "cnc_arc": 0x18,
     "pump_purge": 0x19,
     "set_accel_scale": 0x1A,
+    "cnc_rectangle": 0x1B,
 }
 
 # Immediate control opcodes
@@ -91,6 +93,10 @@ DEFAULTS = {
     "wait": {
         "timeout_ms": 0,
     },
+    "cnc_rectangle": {
+        "InsetDistance_m": 0.0,
+        "LinearSpeed_mps": 0.05,
+    },
 }
 
 
@@ -102,6 +108,7 @@ def print_help() -> None:
     print("  cnc_constant_speed k=v [k=v] [...] or comma-separated")
     print("  cnc_jog TargetX_m=<m> TargetY_m=<m> LinearSpeed_mps=<m/s> PumpOn=<0|1>")
     print("  cnc_arc StartTheta_rad=<rad> EndTheta_rad=<rad> Radius_m=<m> LinearSpeed_mps=<m/s> CenterX_m=<m> CenterY_m=<m>")
+    print("  cnc_rectangle InsetDistance_m=<m> LinearSpeed_mps=<m/s>")
     print("  pump_purge pumpSpeed_degps=<deg/s> duration_ms=<ms>")
     print("  wait timeout_ms=<int>")
     print("  set_motor_limits motor=<S0|S1|Pump|All> accel=<degps2> speed=<degps>")
@@ -152,6 +159,11 @@ COMMAND_HELP: Dict[str, str] = {
         "  LinearSpeed_mps:    float\n"
         "Note: Arc center is derived from current position as the start point on the arc."
     ),
+    "cnc_rectangle": (
+        "cnc_rectangle keys:\n"
+        "  InsetDistance_m: float margin from min/max arm reach\n"
+        "  LinearSpeed_mps: float"
+    ),
     "wait": (
         "wait keys:\n"
         "  timeout_ms: int"
@@ -200,6 +212,7 @@ CMD_ALIASES: Dict[str, str] = {
     "CNC_ConstantSpeed": "cnc_constant_speed",
     "CNC_Jog": "cnc_jog",
     "CNC_Arc": "cnc_arc",
+    "CNC_Rectangle": "cnc_rectangle",
     "SetMotorLimits": "set_motor_limits",
     "SetPumpConstant": "set_pump_constant",
     "SetAccelScale": "set_accel_scale",
@@ -336,6 +349,15 @@ def _build_cnc_payload(cmd: str, args: Dict[str, Any]) -> Tuple[int, bytes]:
         cx = float(args.get("CenterX_m"))
         cy = float(args.get("CenterY_m"))
         payload = struct.pack("<ffffff", start, end, r, sp, cx, cy)
+        return op, payload
+    elif cmd == "cnc_rectangle":
+        allowed = {"InsetDistance_m", "LinearSpeed_mps"}
+        unknown = set(args.keys()) - allowed
+        if unknown:
+            raise ValueError(f"Unknown keys for cnc_rectangle: {', '.join(sorted(unknown))}")
+        inset = float(merged.get("InsetDistance_m"))
+        sp = float(merged.get("LinearSpeed_mps"))
+        payload = struct.pack("<ff", inset, sp)
         return op, payload
     elif cmd == "pump_purge":
         allowed = {"pumpSpeed_degps", "duration_ms"}
@@ -535,6 +557,7 @@ def main() -> None:
             "set_accel_scale",
             "cnc_jog",
             "cnc_arc",
+            "cnc_rectangle",
             "pump_purge",
             "ask_to_continue",
             "terminal_wait",
@@ -564,6 +587,7 @@ def main() -> None:
             "set_accel_scale": ["accelScale"],
             "cnc_jog": ["TargetX_m", "TargetY_m", "LinearSpeed_mps", "PumpOn"],
             "cnc_arc": ["StartTheta_rad", "EndTheta_rad", "Radius_m", "LinearSpeed_mps", "CenterX_m", "CenterY_m"],
+            "cnc_rectangle": ["InsetDistance_m", "LinearSpeed_mps"],
             "pump_purge": ["pumpSpeed_degps", "duration_ms"],
             "terminal_wait": ["duration_ms"],
         }

@@ -12,3 +12,4 @@ constexpr uint8_t CNC_CONFIG_PUMP_CONSTANT_OPCODE = 0x17;
 constexpr uint8_t CNC_ARC_OPCODE = 0x18;
 constexpr uint8_t CNC_PUMP_PURGE_OPCODE = 0x19;
 constexpr uint8_t CNC_CONFIG_ACCEL_SCALE_OPCODE = 0x1A;
+constexpr uint8_t CNC_RECTANGLE_OPCODE = 0x1B;

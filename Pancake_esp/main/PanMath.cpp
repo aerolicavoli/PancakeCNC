@@ -16,8 +16,8 @@
              \| (Target Angle)
      (S0 Ang) *-----------> X-axis
 */
-const float C_S0Length_m = 0.1963f;
-const float C_S1Length_m = 0.1563f;
+const float C_S0Length_m = 0.22;
+const float C_S1Length_m = 0.119f;
 const float C_S0L2_PLUS_S1L2_m2 = C_S0Length_m * C_S0Length_m + C_S1Length_m * C_S1Length_m;
 const float C_S0L2_MINUS_S1L2_m2 = C_S0Length_m * C_S0Length_m - C_S1Length_m * C_S1Length_m;
 const float C_Inv_2_TIMES_S0L_TIMES_S1L_1pm2 = 1.0f / (2.0f * C_S0Length_m * C_S1Length_m);
@@ -95,6 +95,10 @@ MathErrorCodes CartToAng(float &S0Ang_deg, float &S1Ang_deg, Vector2D Pos_m)
         C_RADToDEG;
     return E_OK;
 }
+
+float GetMinReach_m() { return C_MIN_REACH_m; }
+
+float GetMaxReach_m() { return C_MAX_REACH_m; }
 
 /*
 

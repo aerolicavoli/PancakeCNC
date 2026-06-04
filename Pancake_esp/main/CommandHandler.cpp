@@ -136,5 +136,5 @@ void CommandHandlerTask(void *param)
 
 void CommandHandlerStart(void)
 {
-    xTaskCreate(CommandHandlerTask, "CmdHandler", 4096, NULL, 1, NULL);
+    xTaskCreate(CommandHandlerTask, "CmdHandler", 2048, NULL, 1, NULL);
 }

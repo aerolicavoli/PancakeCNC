@@ -1,0 +1,7 @@
+#ifndef CRASHDEBUG_H
+#define CRASHDEBUG_H
+
+void CrashDebugPrintResetReason(void);
+void CrashDebugRecordBoot(void);
+
+#endif // CRASHDEBUG_H
