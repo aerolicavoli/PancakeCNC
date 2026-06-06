@@ -28,7 +28,6 @@ from typing import Optional, Dict, Tuple, Any, List
 import shlex
 import struct
 
-import requests
 import re
 import glob
 
@@ -114,8 +113,12 @@ def print_help() -> None:
     print("  cnc_jog TargetX_m=<m> TargetY_m=<m> LinearSpeed_mps=<m/s> PumpOn=<0|1>")
     print("  cnc_arc StartTheta_rad=<rad> EndTheta_rad=<rad> Radius_m=<m> LinearSpeed_mps=<m/s> CenterX_m=<m> CenterY_m=<m>")
     print("  cnc_rectangle InsetDistance_m=<m> LinearSpeed_mps=<m/s>")
+<<<<<<< ours
     print("  cnc_go_to_angle TargetS0_deg=<deg> TargetS1_deg=<deg> AngleTolerance_deg=<deg>")
     print("  pump_purge pumpSpeed_degps=<deg/s> duration_ms=<ms>")
+=======
+    print("  pump_purge pumpSpeed_degps=<signed deg/s> duration_ms=<ms>")
+>>>>>>> theirs
     print("  wait timeout_ms=<int>")
     print("  set_motor_limits motor=<S0|S1|Pump|All> accel=<degps2> speed=<degps>")
     print("  set_pump_constant pumpConstant_degpm=<val>")
@@ -196,7 +199,7 @@ COMMAND_HELP: Dict[str, str] = {
     ),
     "pump_purge": (
         "pump_purge keys:\n"
-        "  pumpSpeed_degps: float (deg/s)\n"
+        "  pumpSpeed_degps: signed float (deg/s; negative reverses pump)\n"
         "  duration_ms:     int (ms)"
     ),
     "pause": "pause — immediately zero speeds and hold state.",
@@ -450,6 +453,8 @@ def _build_command_packet(line: str) -> Optional[bytes]:
 
 
 def _write_packet(packet: bytes) -> None:
+    import requests
+
     url = f"{INFLUXDB_URL}/api/v2/write"
     params = {
         "org": INFLUXDB_ORG,

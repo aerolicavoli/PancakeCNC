@@ -126,7 +126,7 @@ Queued motion & configuration commands include:
 - `0x18` — `cnc_arc`
 - `0x19` — `pump_purge`
 
-Payloads are little-endian C structs (refer to headers under `Pancake_esp/main/`). The CLI automatically translates key-value inputs into the correct binary layouts.
+Payloads are little-endian C structs (refer to headers under `Pancake_esp/main/`). The CLI automatically translates key-value inputs into the correct binary layouts. `pump_purge` accepts a signed `pumpSpeed_degps`; use a negative value, such as `pump_purge pumpSpeed_degps=-300 duration_ms=500`, to reverse the pump and pull batter back before stopping.
 
 ### Round-Trip Testing
 `GroundStation/RoundtripTest.py` can send a command and fetch the recorded response, verifying connectivity and serialization. If environment variables are missing it will attempt to source `Secret.sh`.
