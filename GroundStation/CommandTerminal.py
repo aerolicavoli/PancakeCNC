@@ -113,12 +113,8 @@ def print_help() -> None:
     print("  cnc_jog TargetX_m=<m> TargetY_m=<m> LinearSpeed_mps=<m/s> PumpOn=<0|1>")
     print("  cnc_arc StartTheta_rad=<rad> EndTheta_rad=<rad> Radius_m=<m> LinearSpeed_mps=<m/s> CenterX_m=<m> CenterY_m=<m>")
     print("  cnc_rectangle InsetDistance_m=<m> LinearSpeed_mps=<m/s>")
-<<<<<<< ours
     print("  cnc_go_to_angle TargetS0_deg=<deg> TargetS1_deg=<deg> AngleTolerance_deg=<deg>")
-    print("  pump_purge pumpSpeed_degps=<deg/s> duration_ms=<ms>")
-=======
     print("  pump_purge pumpSpeed_degps=<signed deg/s> duration_ms=<ms>")
->>>>>>> theirs
     print("  wait timeout_ms=<int>")
     print("  set_motor_limits motor=<S0|S1|Pump|All> accel=<degps2> speed=<degps>")
     print("  set_pump_constant pumpConstant_degpm=<val>")
@@ -262,6 +258,16 @@ def _build_echo_packet(message: str) -> bytes:
     return bytes([opcode, len(data)]) + data
 
 
+def _build_pump_purge_payload(args: Dict[str, Any]) -> bytes:
+    allowed = {"pumpSpeed_degps", "duration_ms"}
+    unknown = set(args.keys()) - allowed
+    if unknown:
+        raise ValueError(f"Unknown keys for pump_purge: {', '.join(sorted(unknown))}")
+    speed_degps = float(args.get("pumpSpeed_degps"))
+    duration_ms = int(args.get("duration_ms"))
+    return struct.pack("<fi", speed_degps, duration_ms)
+
+
 def _build_cnc_payload(cmd: str, args: Dict[str, Any]) -> Tuple[int, bytes]:
     if cmd not in CNC_OPCODES:
         raise ValueError(f"Unknown CNC command: {cmd}")
@@ -386,14 +392,7 @@ def _build_cnc_payload(cmd: str, args: Dict[str, Any]) -> Tuple[int, bytes]:
         payload = struct.pack("<fff", s0, s1, tol)
         return op, payload
     elif cmd == "pump_purge":
-        allowed = {"pumpSpeed_degps", "duration_ms"}
-        unknown = set(args.keys()) - allowed
-        if unknown:
-            raise ValueError(f"Unknown keys for pump_purge: {', '.join(sorted(unknown))}")
-        spd = float(args.get("pumpSpeed_degps"))
-        dur = int(args.get("duration_ms"))
-        payload = struct.pack("<fi", spd, dur)
-        return op, payload
+        return op, _build_pump_purge_payload(args)
     else:
         raise ValueError(f"No payload builder for {cmd}")
 
