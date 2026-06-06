@@ -1,5 +1,26 @@
 #include "PanMath.h"
 
+namespace
+{
+float ClampUnitRange(float value)
+{
+    if (value > 1.0f)
+    {
+        return 1.0f;
+    }
+    if (value < -1.0f)
+    {
+        return -1.0f;
+    }
+    return value;
+}
+
+float NonNegativeInset(float inset_m)
+{
+    return (inset_m > 0.0f) ? inset_m : 0.0f;
+}
+} // namespace
+
 /*
            Y-axis
               ^
@@ -47,10 +68,11 @@ void AngToCart(float S0Ang_deg, float S1Ang_deg, float S0Rate_degps, float S1Rat
     float ct = cos(theta_rad);
     float st = sin(theta_rad);
 
-    CartVel_mps.x = S1Rate_degps * C_DEGToRAD * C_S1Length_m * cp +
-                    S0Rate_degps * C_DEGToRAD * C_S0Length_m * ct;
-    CartVel_mps.y = -1.0 * S1Rate_degps * C_DEGToRAD * C_S1Length_m * sp -
-                    S0Rate_degps * C_DEGToRAD * C_S0Length_m * st;
+    float phi_rate_radps = (S0Rate_degps + S1Rate_degps) * C_DEGToRAD;
+    float theta_rate_radps = S0Rate_degps * C_DEGToRAD;
+
+    CartVel_mps.x = phi_rate_radps * C_S1Length_m * cp + theta_rate_radps * C_S0Length_m * ct;
+    CartVel_mps.y = -1.0f * phi_rate_radps * C_S1Length_m * sp - theta_rate_radps * C_S0Length_m * st;
 
     CartPos_m.x = st * C_S0Length_m + sp * C_S1Length_m;
     CartPos_m.y = ct * C_S0Length_m + cp * C_S1Length_m;
@@ -86,12 +108,14 @@ MathErrorCodes CartToAng(float &S0Ang_deg, float &S1Ang_deg, Vector2D Pos_m)
     // Convert the triangle's inner angles to motor positions
     // TODO, add criteria to select for which of the two solutions to use.
 
-    S0Ang_deg = (targetAng_rd + acos((C_S0L2_MINUS_S1L2_m2 + targetDistSquared_m2) /
-                                     (2.0 * C_S0Length_m * targetDist_m))) *
-                C_RADToDEG;
+    float s0CosArg = (C_S0L2_MINUS_S1L2_m2 + targetDistSquared_m2) /
+                     (2.0f * C_S0Length_m * targetDist_m);
+    float s1CosArg =
+        (C_S0L2_PLUS_S1L2_m2 - targetDistSquared_m2) * C_Inv_2_TIMES_S0L_TIMES_S1L_1pm2;
+
+    S0Ang_deg = (targetAng_rd + acosf(ClampUnitRange(s0CosArg))) * C_RADToDEG;
     S1Ang_deg =
-        (acos((C_S0L2_PLUS_S1L2_m2 - targetDistSquared_m2) * C_Inv_2_TIMES_S0L_TIMES_S1L_1pm2) -
-         M_PI) *
+        (acosf(ClampUnitRange(s1CosArg)) - M_PI) *
         C_RADToDEG;
     return E_OK;
 }
@@ -99,6 +123,43 @@ MathErrorCodes CartToAng(float &S0Ang_deg, float &S1Ang_deg, Vector2D Pos_m)
 float GetMinReach_m() { return C_MIN_REACH_m; }
 
 float GetMaxReach_m() { return C_MAX_REACH_m; }
+
+bool GetReachableRectangleCorners(Vector2D corners_m[4], float inset_m)
+{
+    if (corners_m == nullptr)
+    {
+        return false;
+    }
+
+    float inset = NonNegativeInset(inset_m);
+    float innerRadius_m = GetMinReach_m() + inset;
+    float outerRadius_m = GetMaxReach_m() - inset;
+
+    if (outerRadius_m <= innerRadius_m || outerRadius_m <= 0.0f)
+    {
+        return false;
+    }
+
+    float topY_m =
+        (innerRadius_m + sqrtf(innerRadius_m * innerRadius_m + 8.0f * outerRadius_m * outerRadius_m)) *
+        0.25f;
+    if (topY_m <= innerRadius_m || topY_m >= outerRadius_m)
+    {
+        return false;
+    }
+
+    float halfWidth_m = sqrtf(outerRadius_m * outerRadius_m - topY_m * topY_m);
+    if (halfWidth_m <= 0.0f)
+    {
+        return false;
+    }
+
+    corners_m[0] = Vector2D(-halfWidth_m, innerRadius_m);
+    corners_m[1] = Vector2D(halfWidth_m, innerRadius_m);
+    corners_m[2] = Vector2D(halfWidth_m, topY_m);
+    corners_m[3] = Vector2D(-halfWidth_m, topY_m);
+    return true;
+}
 
 /*
 

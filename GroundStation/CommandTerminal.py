@@ -8,6 +8,7 @@ Simplified syntax (no leading / or -a):
   cnc_sine Amplitude_deg=10 Frequency_hz=0.25
   cnc_constant_speed S0Speed_degps=0 S1Speed_degps=45
   cnc_rectangle InsetDistance_m=0.01 LinearSpeed_mps=0.05
+  cnc_go_to_angle TargetS0_deg=0 TargetS1_deg=0 AngleTolerance_deg=0.25
 
 Run a newline-delimited program file:
   run_file TestProgram.txt
@@ -27,7 +28,6 @@ from typing import Optional, Dict, Tuple, Any, List
 import shlex
 import struct
 
-import requests
 import re
 import glob
 
@@ -63,6 +63,7 @@ CNC_OPCODES: Dict[str, int] = {
     "pump_purge": 0x19,
     "set_accel_scale": 0x1A,
     "cnc_rectangle": 0x1B,
+    "cnc_go_to_angle": 0x1C,
 }
 
 # Immediate control opcodes
@@ -97,6 +98,9 @@ DEFAULTS = {
         "InsetDistance_m": 0.0,
         "LinearSpeed_mps": 0.05,
     },
+    "cnc_go_to_angle": {
+        "AngleTolerance_deg": 0.25,
+    },
 }
 
 
@@ -109,7 +113,8 @@ def print_help() -> None:
     print("  cnc_jog TargetX_m=<m> TargetY_m=<m> LinearSpeed_mps=<m/s> PumpOn=<0|1>")
     print("  cnc_arc StartTheta_rad=<rad> EndTheta_rad=<rad> Radius_m=<m> LinearSpeed_mps=<m/s> CenterX_m=<m> CenterY_m=<m>")
     print("  cnc_rectangle InsetDistance_m=<m> LinearSpeed_mps=<m/s>")
-    print("  pump_purge pumpSpeed_degps=<deg/s> duration_ms=<ms>")
+    print("  cnc_go_to_angle TargetS0_deg=<deg> TargetS1_deg=<deg> AngleTolerance_deg=<deg>")
+    print("  pump_purge pumpSpeed_degps=<signed deg/s> duration_ms=<ms>")
     print("  wait timeout_ms=<int>")
     print("  set_motor_limits motor=<S0|S1|Pump|All> accel=<degps2> speed=<degps>")
     print("  set_pump_constant pumpConstant_degpm=<val>")
@@ -164,6 +169,12 @@ COMMAND_HELP: Dict[str, str] = {
         "  InsetDistance_m: float margin from min/max arm reach\n"
         "  LinearSpeed_mps: float"
     ),
+    "cnc_go_to_angle": (
+        "cnc_go_to_angle keys:\n"
+        "  TargetS0_deg:       float absolute stage-0 angle target\n"
+        "  TargetS1_deg:       float absolute stage-1 angle target\n"
+        "  AngleTolerance_deg: float completion tolerance (default 0.25)"
+    ),
     "wait": (
         "wait keys:\n"
         "  timeout_ms: int"
@@ -184,7 +195,7 @@ COMMAND_HELP: Dict[str, str] = {
     ),
     "pump_purge": (
         "pump_purge keys:\n"
-        "  pumpSpeed_degps: float (deg/s)\n"
+        "  pumpSpeed_degps: signed float (deg/s; negative reverses pump)\n"
         "  duration_ms:     int (ms)"
     ),
     "pause": "pause — immediately zero speeds and hold state.",
@@ -213,6 +224,7 @@ CMD_ALIASES: Dict[str, str] = {
     "CNC_Jog": "cnc_jog",
     "CNC_Arc": "cnc_arc",
     "CNC_Rectangle": "cnc_rectangle",
+    "CNC_GoToAngle": "cnc_go_to_angle",
     "SetMotorLimits": "set_motor_limits",
     "SetPumpConstant": "set_pump_constant",
     "SetAccelScale": "set_accel_scale",
@@ -244,6 +256,16 @@ def _build_echo_packet(message: str) -> bytes:
     if len(data) > 255:
         raise ValueError("message too long for single-byte length field")
     return bytes([opcode, len(data)]) + data
+
+
+def _build_pump_purge_payload(args: Dict[str, Any]) -> bytes:
+    allowed = {"pumpSpeed_degps", "duration_ms"}
+    unknown = set(args.keys()) - allowed
+    if unknown:
+        raise ValueError(f"Unknown keys for pump_purge: {', '.join(sorted(unknown))}")
+    speed_degps = float(args.get("pumpSpeed_degps"))
+    duration_ms = int(args.get("duration_ms"))
+    return struct.pack("<fi", speed_degps, duration_ms)
 
 
 def _build_cnc_payload(cmd: str, args: Dict[str, Any]) -> Tuple[int, bytes]:
@@ -359,15 +381,18 @@ def _build_cnc_payload(cmd: str, args: Dict[str, Any]) -> Tuple[int, bytes]:
         sp = float(merged.get("LinearSpeed_mps"))
         payload = struct.pack("<ff", inset, sp)
         return op, payload
-    elif cmd == "pump_purge":
-        allowed = {"pumpSpeed_degps", "duration_ms"}
+    elif cmd == "cnc_go_to_angle":
+        allowed = {"TargetS0_deg", "TargetS1_deg", "AngleTolerance_deg"}
         unknown = set(args.keys()) - allowed
         if unknown:
-            raise ValueError(f"Unknown keys for pump_purge: {', '.join(sorted(unknown))}")
-        spd = float(args.get("pumpSpeed_degps"))
-        dur = int(args.get("duration_ms"))
-        payload = struct.pack("<fi", spd, dur)
+            raise ValueError(f"Unknown keys for cnc_go_to_angle: {', '.join(sorted(unknown))}")
+        s0 = float(args.get("TargetS0_deg"))
+        s1 = float(args.get("TargetS1_deg"))
+        tol = float(merged.get("AngleTolerance_deg"))
+        payload = struct.pack("<fff", s0, s1, tol)
         return op, payload
+    elif cmd == "pump_purge":
+        return op, _build_pump_purge_payload(args)
     else:
         raise ValueError(f"No payload builder for {cmd}")
 
@@ -427,6 +452,8 @@ def _build_command_packet(line: str) -> Optional[bytes]:
 
 
 def _write_packet(packet: bytes) -> None:
+    import requests
+
     url = f"{INFLUXDB_URL}/api/v2/write"
     params = {
         "org": INFLUXDB_ORG,
@@ -558,6 +585,7 @@ def main() -> None:
             "cnc_jog",
             "cnc_arc",
             "cnc_rectangle",
+            "cnc_go_to_angle",
             "pump_purge",
             "ask_to_continue",
             "terminal_wait",
@@ -588,6 +616,7 @@ def main() -> None:
             "cnc_jog": ["TargetX_m", "TargetY_m", "LinearSpeed_mps", "PumpOn"],
             "cnc_arc": ["StartTheta_rad", "EndTheta_rad", "Radius_m", "LinearSpeed_mps", "CenterX_m", "CenterY_m"],
             "cnc_rectangle": ["InsetDistance_m", "LinearSpeed_mps"],
+            "cnc_go_to_angle": ["TargetS0_deg", "TargetS1_deg", "AngleTolerance_deg"],
             "pump_purge": ["pumpSpeed_degps", "duration_ms"],
             "terminal_wait": ["duration_ms"],
         }

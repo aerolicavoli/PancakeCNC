@@ -11,3 +11,6 @@ Pancake_esp/managed_components
 *auto_save*
 *~*
 *cach*
+
+# Host unit-test build output
+/build/

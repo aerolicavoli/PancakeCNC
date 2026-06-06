@@ -8,6 +8,7 @@
 // Calculate days since Unix epoch for a given civil date.
 // Algorithm adapted from Howard Hinnant's date algorithms:
 // https://howardhinnant.github.io/date_algorithms.html
+#if !defined(_WIN32) && !defined(__GLIBC__)
 static int days_from_civil(int y, unsigned m, unsigned d) {
     y -= m <= 2;
     const int era = (y >= 0 ? y : y - 399) / 400;
@@ -16,6 +17,7 @@ static int days_from_civil(int y, unsigned m, unsigned d) {
     const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;     // [0, 146096]
     return era * 146097 + static_cast<int>(doe) - 719468;
 }
+#endif
 
 static time_t utc_mktime(const struct tm &tm) {
 #if defined(_WIN32)

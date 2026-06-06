@@ -1,6 +1,8 @@
 #ifndef GENERAL_GUIDANCE_H
 #define GENERAL_GUIDANCE_H
 
+#include <cstddef>
+
 #include "esp_types.h"
 
 #include "Vector2D.h"
@@ -65,6 +67,9 @@ class WaitGuidance : public GeneralGuidance
     bool GetTargetPosition(unsigned int DeltaTime_ms, Vector2D CurPos_m, Vector2D &CmdPos_m,
                            bool &CmdViaAngle, float &S0Speed_degps, float &S1Speed_degps) override
     {
+        (void)CmdViaAngle;
+        (void)S0Speed_degps;
+        (void)S1Speed_degps;
         CmdPos_m = CurPos_m;
 
         if ((Config.timeout_ms != -1) && (remaining_time_ms -= DeltaTime_ms) <= 0)
@@ -107,6 +112,7 @@ class SineGuidance : public GeneralGuidance
     bool GetTargetPosition(unsigned int DeltaTime_ms, Vector2D CurPos_m, Vector2D &CmdPos_m,
                            bool &CmdViaAngle, float &S0Speed_degps, float &S1Speed_degps) override
     {
+        (void)CurPos_m;
         CmdViaAngle = true;
         CmdPos_m.x = 0.0;
         CmdPos_m.y = 0.0;
@@ -147,6 +153,9 @@ class ConstantSpeed : public GeneralGuidance
     bool GetTargetPosition(unsigned int DeltaTime_ms, Vector2D CurPos_m, Vector2D &CmdPos_m,
                            bool &CmdViaAngle, float &S0Speed_degps, float &S1Speed_degps) override
     {
+        (void)DeltaTime_ms;
+        (void)CurPos_m;
+        (void)CmdPos_m;
         CmdViaAngle = true;
 
         S0Speed_degps = Config.S0Speed_degps;

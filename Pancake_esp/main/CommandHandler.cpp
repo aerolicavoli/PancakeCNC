@@ -21,6 +21,8 @@ static inline bool is_cnc_opcode(uint8_t op)
         case CNC_ARC_OPCODE:
         case CNC_PUMP_PURGE_OPCODE:
         case CNC_CONFIG_ACCEL_SCALE_OPCODE:
+        case CNC_RECTANGLE_OPCODE:
+        case CNC_GO_TO_ANGLE_OPCODE:
             return true;
         default:
             return false;
