@@ -1,9 +1,11 @@
 #include "MotorControl.h"
-#include "CommandHandler.h"
+#include "MotorCommandRouter.h"
+#include "MotorControlState.h"
 #include "JogGuidance.h"
 #include "ArcGuidance.h"
 #include "RectangleGuidance.h"
 #include "GoToAngleGuidance.h"
+#include "GuidanceRegistry.h"
 #include "CNCOpCodes.h"
 #include "MotionSafety.h"
 
@@ -63,16 +65,24 @@ static float ComputeDecelLimitedSpeedDegps(float currentAngle_deg, float targetA
     return accel * Sign(angleToGo_deg) * sqrtf(2.0f * fabsf(angleToGo_deg) / accel);
 }
 
-static int DrainCncCommandQueue()
+
+static bool ResolveJogPumpEnabled(const GeneralGuidance &guidance)
 {
-    decoded_cmd_payload_t tmp;
-    int drained = 0;
-    while (xQueueReceive(cmd_queue_cnc, &tmp, 0) == pdTRUE)
-    {
-        drained++;
-    }
-    return drained;
+    return static_cast<const JogGuidance &>(guidance).Config.PumpOn != 0;
 }
+
+static void LogGuidanceLoadError(const GuidanceLoadError &error)
+{
+    if (!error.opcodeKnown)
+    {
+        ESP_LOGE(TAG, "Unknown OpCode: 0x%02X", error.opcode);
+        return;
+    }
+
+    ESP_LOGE(TAG, "Invalid payload length for OpCode 0x%02X: expected %u got %u",
+             error.opcode, (unsigned)error.expectedPayloadLength, (unsigned)error.actualPayloadLength);
+}
+
 
 void MotorControlInit()
 {
@@ -110,26 +120,10 @@ void MotorControlTask(void *Parameters)
     // 100hz motor control loop
     const int motorUpdatePeriod_Ticks = pdMS_TO_TICKS(MOTOR_CONTROL_PERIOD_MS);
 
-    // Control parms
-    static float pumpConstant_degpm = 1.0e5f;
-    static float accelScale = 0.01f;
-    const float posTol_m(1.0);
-
-    // Working variables
-    float targetS0_deg, targetS1_deg;
-    targetS0_deg = targetS1_deg = 0.0f;
-    float S0CmdSpeed_degps = 0.0f;
-    float S1CmdSpeed_degps = 0.0f;
-    float pumpSpeed_degps = 0.0f;
-    // Pump purge state
-    bool PumpPurgeActive = false;
-    float PumpPurgeSpeed_degps = 0.0f;
-    int PumpPurgeRemaining_ms = 0;
-
-    // Program control
-    bool instructionComplete = true;
-    bool pumpThisMode = false;
-    bool cmdViaAngle = false;
+    MotorControlConfig config;
+    MotorControlState state;
+    state.currentPosition_m = Pos_m;
+    state.target_m = Target_m;
 
     // Guidance objects
     ArchimedeanSpiral spiralGuidance;
@@ -141,53 +135,33 @@ void MotorControlTask(void *Parameters)
     RectangleGuidance rectangleGuidance;
     GoToAngleGuidance goToAngleGuidance;
 
-    GeneralGuidance *currentGuidance = nullptr;
+    GuidanceRegistry guidanceRegistry;
+    guidanceRegistry.Register({CNC_SPIRAL_OPCODE, sizeof(SpiralConfig), PumpPolicySource::AlwaysOn, GuidanceCommandMode::Cartesian,
+                               ApplyTypedGuidanceConfig<ArchimedeanSpiral, SpiralConfig>, &spiralGuidance, nullptr});
+    guidanceRegistry.Register({CNC_JOG_OPCODE, sizeof(JogConfig), PumpPolicySource::FromPayload, GuidanceCommandMode::Cartesian,
+                               ApplyTypedGuidanceConfig<JogGuidance, JogConfig>, &jogGuidance, ResolveJogPumpEnabled});
+    guidanceRegistry.Register({CNC_ARC_OPCODE, sizeof(ArcConfig), PumpPolicySource::AlwaysOn, GuidanceCommandMode::Cartesian,
+                               ApplyTypedGuidanceConfig<ArcGuidance, ArcConfig>, &arcGuidance, nullptr});
+    guidanceRegistry.Register({CNC_RECTANGLE_OPCODE, sizeof(RectangleConfig), PumpPolicySource::AlwaysOn, GuidanceCommandMode::Cartesian,
+                               ApplyTypedGuidanceConfig<RectangleGuidance, RectangleConfig>, &rectangleGuidance, nullptr});
+    guidanceRegistry.Register({CNC_GO_TO_ANGLE_OPCODE, sizeof(GoToAngleConfig), PumpPolicySource::AlwaysOff, GuidanceCommandMode::Angle,
+                               ApplyTypedGuidanceConfig<GoToAngleGuidance, GoToAngleConfig>, &goToAngleGuidance, nullptr});
+    guidanceRegistry.Register({CNC_WAIT_OPCODE, sizeof(WaitGuidance::WaitConfig), PumpPolicySource::AlwaysOff, GuidanceCommandMode::Cartesian,
+                               ApplyTypedGuidanceConfig<WaitGuidance, WaitGuidance::WaitConfig>, &waitGuidance, nullptr});
+    guidanceRegistry.Register({CNC_SINE_OPCODE, sizeof(SineGuidance::SineConfig), PumpPolicySource::AlwaysOff, GuidanceCommandMode::Angle,
+                               ApplyTypedGuidanceConfig<SineGuidance, SineGuidance::SineConfig>, &sineGuidance, nullptr});
+    guidanceRegistry.Register({CNC_CONSTANT_SPEED_OPCODE, sizeof(ConstantSpeed::ConstantSpeedConfig), PumpPolicySource::AlwaysOff, GuidanceCommandMode::Angle,
+                               ApplyTypedGuidanceConfig<ConstantSpeed, ConstantSpeed::ConstantSpeedConfig>, &constantSpeed, nullptr});
+
+    MotorCommandRouter commandRouter(cmd_queue_now, cmd_queue_cnc, TAG);
 
     // RBF
     CNCEnabled = true;
     for (;;)
     {
-        bool forceSpeedUpdate = false;
-
-        // Handle immediate control commands (Pause / Resume / Stop)
-        uint8_t now_code;
-        if (xQueueReceive(cmd_queue_now, &now_code, 0) == pdTRUE)
-        {
-            if (now_code == 0x01)
-            {
-                EStopActive = true;
-                ESP_LOGW(TAG, "Pause ACTIVE");
-            }
-            else if (now_code == 0x02)
-            {
-                EStopActive = false;
-                ESP_LOGW(TAG, "Pause CLEARED");
-            }
-            else if (now_code == 0x03)
-            {
-                // Full stop: clear CNC queue and idle
-                MotionHoldCommand stopCommand = MakeStoppedHoldCommand(
-                    Pos_m, LocalS0Tlm.Position_deg, LocalS1Tlm.Position_deg);
-
-                EStopActive = stopCommand.pauseActive;
-                instructionComplete = stopCommand.instructionComplete;
-                currentGuidance = nullptr;
-                pumpThisMode = false;
-                PumpPurgeActive = false;
-                PumpPurgeRemaining_ms = 0;
-                cmdViaAngle = stopCommand.cmdViaAngle;
-                Target_m = stopCommand.target_m;
-                targetS0_deg = stopCommand.targetS0_deg;
-                targetS1_deg = stopCommand.targetS1_deg;
-                S0CmdSpeed_degps = stopCommand.s0CmdSpeed_degps;
-                S1CmdSpeed_degps = stopCommand.s1CmdSpeed_degps;
-                pumpSpeed_degps = stopCommand.pumpSpeed_degps;
-                forceSpeedUpdate = stopCommand.forceSpeedUpdate;
-
-                int drained = stopCommand.clearCommandQueue ? DrainCncCommandQueue() : 0;
-                ESP_LOGW(TAG, "Stop: cleared %d queued commands", drained);
-            }
-        }
+        state.BeginLoop();
+        commandRouter.ConsumeImmediateCommands(state, state.currentPosition_m,
+                                               LocalS0Tlm.Position_deg, LocalS1Tlm.Position_deg);
         // Copy local tlm
         PumpMotor.GetTlm(&LocalPumpTlm);
         S0Motor.GetTlm(&LocalS0Tlm);
@@ -195,342 +169,103 @@ void MotorControlTask(void *Parameters)
 
         // Compute the current CNC position
         AngToCart(LocalS0Tlm.Position_deg, LocalS1Tlm.Position_deg, LocalS0Tlm.Speed_degps,
-                  LocalS1Tlm.Speed_degps, Pos_m, Vel_mps);
+                  LocalS1Tlm.Speed_degps, state.currentPosition_m, state.currentVelocity_mps);
+        Pos_m = state.currentPosition_m;
+        Vel_mps = state.currentVelocity_mps;
 
         // Apply any pending configuration commands (non-blocking)
-        if (!EStopActive)
+        if (!state.pauseActive)
         {
-            decoded_cmd_payload_t peeked{};
-            while (xQueuePeek(cmd_queue_cnc, &peeked, 0) == pdTRUE)
-            {
-                if (peeked.opcode == CNC_CONFIG_MOTOR_LIMITS_OPCODE)
-                {
-                    decoded_cmd_payload_t cfg;
-                    xQueueReceive(cmd_queue_cnc, &cfg, 0);
-                    if (cfg.instruction_length >= 1 + sizeof(float) * 2)
-                    {
-                        uint8_t motor_id = cfg.instructions[2];
-                        float accel, speed;
-                        memcpy(&accel, &cfg.instructions[3], sizeof(float));
-                        memcpy(&speed, &cfg.instructions[7], sizeof(float));
-
-                        auto apply_limits = [&](StepperMotor &m) {
-                            m.SetAccelLimit(accel);
-                            m.SetSpeedLimit(speed);
-                        };
-                        if (motor_id == 0 || motor_id == 255) apply_limits(S0Motor);
-                        if (motor_id == 1 || motor_id == 255) apply_limits(S1Motor);
-                        if (motor_id == 2 || motor_id == 255) apply_limits(PumpMotor);
-                        ESP_LOGI(TAG, "Applied motor limits: id=%u accel=%.3f speed=%.3f", motor_id, accel, speed);
-                    }
-                }
-                else if (peeked.opcode == CNC_CONFIG_PUMP_CONSTANT_OPCODE)
-                {
-                    decoded_cmd_payload_t cfg;
-                    xQueueReceive(cmd_queue_cnc, &cfg, 0);
-                    if (cfg.instruction_length >= sizeof(float))
-                    {
-                        float k;
-                        memcpy(&k, &cfg.instructions[2], sizeof(float));
-                        pumpConstant_degpm = k;
-                        ESP_LOGI(TAG, "Applied pumpConstant_degpm=%.3f", pumpConstant_degpm);
-                    }
-                }
-                else if (peeked.opcode == CNC_CONFIG_ACCEL_SCALE_OPCODE)
-                {
-                    decoded_cmd_payload_t cfg;
-                    xQueueReceive(cmd_queue_cnc, &cfg, 0);
-                    if (cfg.instruction_length >= sizeof(float))
-                    {
-                        float s;
-                        memcpy(&s, &cfg.instructions[2], sizeof(float));
-                        accelScale = s;
-                        ESP_LOGI(TAG, "Applied accelScale=%.3f", accelScale);
-                    }
-                }
-                else if (peeked.opcode == CNC_PUMP_PURGE_OPCODE)
-                {
-                    decoded_cmd_payload_t cfg;
-                    xQueueReceive(cmd_queue_cnc, &cfg, 0);
-                    if (cfg.instruction_length >= (sizeof(float) + sizeof(int32_t)))
-                    {
-                        float spd;
-                        int32_t dur;
-                        memcpy(&spd, &cfg.instructions[2], sizeof(float));
-                        memcpy(&dur, &cfg.instructions[6], sizeof(int32_t));
-                        PumpPurgeSpeed_degps = spd;
-                        PumpPurgeRemaining_ms = dur;
-                        PumpPurgeActive = (dur > 0);
-                        ESP_LOGW(TAG, "Pump purge received: speed=%.1f deg/s, duration=%d ms", spd, (int)dur);
-                    }
-                }
-                else
-                {
-                    break; // next item is guidance or unknown; leave it
-                }
-            }
+            commandRouter.ConsumePendingConfigurationCommands(config, state, S0Motor, S1Motor, PumpMotor);
         }
 
         // If ready for the next instruction, check queue without blocking
-        if (instructionComplete && !EStopActive)
+        decoded_cmd_payload_t decoded{};
+        if (commandRouter.ReceiveNextMotionCommand(state.instructionComplete && !state.pauseActive, decoded))
         {
-            decoded_cmd_payload_t decoded{};
-            if (xQueueReceive(cmd_queue_cnc, &decoded, 0) == pdTRUE)
+            size_t payloadLength = decoded.instruction_length;
+            if (payloadLength > CMD_INSTRUCTION_PAYLOAD_MAX_LEN)
             {
-                size_t payloadLength = decoded.instruction_length;
-                if (payloadLength > CMD_INSTRUCTION_PAYLOAD_MAX_LEN)
-                {
-                    ESP_LOGE(TAG, "Payload too large: %u", (unsigned)payloadLength);
-                    continue;
-                }
-
+                ESP_LOGE(TAG, "Payload too large: %u", (unsigned)payloadLength);
+            }
+            else
+            {
                 const uint8_t *payload = decoded.instructions + 2;
                 ESP_LOGI(TAG, "Configuring OpCode: 0x%02X", decoded.opcode);
 
-                instructionComplete = false;
-                currentGuidance = nullptr;
-                pumpThisMode = false;
-                bool configApplied = false;
+                GuidanceLoadResult loadResult{};
+                GuidanceLoadError loadError{};
+                bool configApplied = guidanceRegistry.Load(decoded.opcode, payload, payloadLength, loadResult, loadError);
 
-                switch (decoded.opcode)
+                if (!configApplied || loadResult.guidance == nullptr)
                 {
-                    case CNC_SPIRAL_OPCODE:
-                    {
-                        if (payloadLength == sizeof(SpiralConfig))
-                        {
-                            SpiralConfig cfg{};
-                            memcpy(&cfg, payload, sizeof(cfg));
-                            spiralGuidance.ApplyConfig(cfg);
-                            currentGuidance = &spiralGuidance;
-                            pumpThisMode = true;
-                            configApplied = true;
-                        }
-                        else
-                        {
-                            ESP_LOGE(TAG, "Invalid spiral payload length: expected %u got %u",
-                                     (unsigned)sizeof(SpiralConfig), (unsigned)payloadLength);
-                        }
-                        break;
-                    }
-                    case CNC_JOG_OPCODE:
-                    {
-                        if (payloadLength == sizeof(JogConfig))
-                        {
-                            JogConfig cfg{};
-                            memcpy(&cfg, payload, sizeof(cfg));
-                            jogGuidance.ApplyConfig(cfg);
-                            currentGuidance = &jogGuidance;
-                            configApplied = true;
-                        }
-                        else
-                        {
-                            ESP_LOGE(TAG, "Invalid jog payload length: expected %u got %u",
-                                     (unsigned)sizeof(JogConfig), (unsigned)payloadLength);
-                        }
-                        break;
-                    }
-                    case CNC_ARC_OPCODE:
-                    {
-                        if (payloadLength == sizeof(ArcConfig))
-                        {
-                            ArcConfig cfg{};
-                            memcpy(&cfg, payload, sizeof(cfg));
-                            arcGuidance.ApplyConfig(cfg);
-                            currentGuidance = &arcGuidance;
-                            pumpThisMode = true;
-                            configApplied = true;
-                        }
-                        else
-                        {
-                            ESP_LOGE(TAG, "Invalid arc payload length: expected %u got %u",
-                                     (unsigned)sizeof(ArcConfig), (unsigned)payloadLength);
-                        }
-                        break;
-                    }
-                    case CNC_RECTANGLE_OPCODE:
-                    {
-                        if (payloadLength == sizeof(RectangleConfig))
-                        {
-                            RectangleConfig cfg{};
-                            memcpy(&cfg, payload, sizeof(cfg));
-                            rectangleGuidance.ApplyConfig(cfg);
-                            currentGuidance = &rectangleGuidance;
-                            pumpThisMode = true;
-                            configApplied = true;
-                        }
-                        else
-                        {
-                            ESP_LOGE(TAG, "Invalid rectangle payload length: expected %u got %u",
-                                     (unsigned)sizeof(RectangleConfig), (unsigned)payloadLength);
-                        }
-                        break;
-                    }
-                    case CNC_GO_TO_ANGLE_OPCODE:
-                    {
-                        if (payloadLength == sizeof(GoToAngleConfig))
-                        {
-                            GoToAngleConfig cfg{};
-                            memcpy(&cfg, payload, sizeof(cfg));
-                            goToAngleGuidance.ApplyConfig(cfg);
-                            currentGuidance = &goToAngleGuidance;
-                            configApplied = true;
-                        }
-                        else
-                        {
-                            ESP_LOGE(TAG, "Invalid go-to-angle payload length: expected %u got %u",
-                                     (unsigned)sizeof(GoToAngleConfig), (unsigned)payloadLength);
-                        }
-                        break;
-                    }
-                    case CNC_WAIT_OPCODE:
-                    {
-                        if (payloadLength == sizeof(WaitGuidance::WaitConfig))
-                        {
-                            WaitGuidance::WaitConfig cfg{};
-                            memcpy(&cfg, payload, sizeof(cfg));
-                            waitGuidance.ApplyConfig(cfg);
-                            currentGuidance = &waitGuidance;
-                            configApplied = true;
-                        }
-                        else
-                        {
-                            ESP_LOGE(TAG, "Invalid wait payload length: expected %u got %u",
-                                     (unsigned)sizeof(WaitGuidance::WaitConfig), (unsigned)payloadLength);
-                        }
-                        break;
-                    }
-                    case CNC_SINE_OPCODE:
-                    {
-                        if (payloadLength == sizeof(SineGuidance::SineConfig))
-                        {
-                            SineGuidance::SineConfig cfg{};
-                            memcpy(&cfg, payload, sizeof(cfg));
-                            sineGuidance.ApplyConfig(cfg);
-                            currentGuidance = &sineGuidance;
-                            configApplied = true;
-                        }
-                        else
-                        {
-                            ESP_LOGE(TAG, "Invalid sine payload length: expected %u got %u",
-                                     (unsigned)sizeof(SineGuidance::SineConfig), (unsigned)payloadLength);
-                        }
-                        break;
-                    }
-                    case CNC_CONSTANT_SPEED_OPCODE:
-                    {
-                        if (payloadLength == sizeof(ConstantSpeed::ConstantSpeedConfig))
-                        {
-                            ConstantSpeed::ConstantSpeedConfig cfg{};
-                            memcpy(&cfg, payload, sizeof(cfg));
-                            constantSpeed.ApplyConfig(cfg);
-                            currentGuidance = &constantSpeed;
-                            configApplied = true;
-                        }
-                        else
-                        {
-                            ESP_LOGE(TAG, "Invalid constant-speed payload length: expected %u got %u",
-                                     (unsigned)sizeof(ConstantSpeed::ConstantSpeedConfig),
-                                     (unsigned)payloadLength);
-                        }
-                        break;
-                    }
-                    default:
-                        ESP_LOGE(TAG, "Unknown OpCode: 0x%02X", decoded.opcode);
-                        break;
-                }
-
-                if (!configApplied || currentGuidance == nullptr)
-                {
-                    instructionComplete = true;
+                    LogGuidanceLoadError(loadError);
+                    state.instructionComplete = true;
                 }
                 else
                 {
-                    if (decoded.opcode == CNC_JOG_OPCODE)
-                    {
-                        pumpThisMode = (jogGuidance.Config.PumpOn != 0);
-                    }
+                    state.StartInstruction(loadResult.guidance, loadResult.pumpEnabled,
+                                           loadResult.commandMode == GuidanceCommandMode::Angle);
                     ESP_LOGI(TAG, "Starting OpCode: 0x%02X", decoded.opcode);
                 }
             }
         }
 
-        if (!EStopActive && !instructionComplete && currentGuidance != nullptr)
+        if (!state.pauseActive && !state.instructionComplete && state.activeGuidance != nullptr)
         {
-            instructionComplete = currentGuidance->GetTargetPosition(
-                MOTOR_CONTROL_PERIOD_MS, Target_m, Target_m, cmdViaAngle, S0CmdSpeed_degps, S1CmdSpeed_degps);
+            state.instructionComplete = state.activeGuidance->GetTargetPosition(
+                MOTOR_CONTROL_PERIOD_MS, state.target_m, state.target_m, state.cmdViaAngle, state.s0CmdSpeed_degps, state.s1CmdSpeed_degps);
         }
         else
         {
             // Idle when no instruction is active or E-Stop engaged
-            cmdViaAngle = true; // Command via angle so that we can specify zero speed
-            S0CmdSpeed_degps = 0.0f;
-            S1CmdSpeed_degps = 0.0f;
-            pumpSpeed_degps = 0.0f;
-            Target_m = Pos_m;
-            targetS0_deg = LocalS0Tlm.Position_deg;
-            targetS1_deg = LocalS1Tlm.Position_deg;
+            state.IdleAtCurrentPosition(state.currentPosition_m, LocalS0Tlm.Position_deg, LocalS1Tlm.Position_deg);
         }
 
-        if (!instructionComplete && !EStopActive && cmdViaAngle)
+        if (!state.instructionComplete && !state.pauseActive && state.cmdViaAngle)
         {
-            pumpSpeed_degps = 0.0f;
-            if (currentGuidance != nullptr && currentGuidance->GetOpCode() == CNC_GO_TO_ANGLE_OPCODE)
+            state.pumpSpeed_degps = 0.0f;
+            if (state.activeGuidance != nullptr && state.activeGuidance->GetOpCode() == CNC_GO_TO_ANGLE_OPCODE)
             {
-                targetS0_deg = goToAngleGuidance.Config.TargetS0_deg;
-                targetS1_deg = goToAngleGuidance.Config.TargetS1_deg;
+                state.targetS0_deg = goToAngleGuidance.Config.TargetS0_deg;
+                state.targetS1_deg = goToAngleGuidance.Config.TargetS1_deg;
 
-                float s0AngleToGo_deg = WrapAngleDeltaDeg(targetS0_deg - LocalS0Tlm.Position_deg);
-                float s1AngleToGo_deg = WrapAngleDeltaDeg(targetS1_deg - LocalS1Tlm.Position_deg);
+                float s0AngleToGo_deg = WrapAngleDeltaDeg(state.targetS0_deg - LocalS0Tlm.Position_deg);
+                float s1AngleToGo_deg = WrapAngleDeltaDeg(state.targetS1_deg - LocalS1Tlm.Position_deg);
                 if (fabsf(s0AngleToGo_deg) <= goToAngleGuidance.Config.AngleTolerance_deg &&
                     fabsf(s1AngleToGo_deg) <= goToAngleGuidance.Config.AngleTolerance_deg)
                 {
-                    instructionComplete = true;
-                    currentGuidance = nullptr;
-                    S0CmdSpeed_degps = 0.0f;
-                    S1CmdSpeed_degps = 0.0f;
+                    state.CompleteInstruction();
                 }
                 else
                 {
-                    S0CmdSpeed_degps = ComputeDecelLimitedSpeedDegps(
-                        LocalS0Tlm.Position_deg, targetS0_deg, S0Motor.GetAccelLimit(), accelScale);
-                    S1CmdSpeed_degps = ComputeDecelLimitedSpeedDegps(
-                        LocalS1Tlm.Position_deg, targetS1_deg, S1Motor.GetAccelLimit(), accelScale);
+                    state.s0CmdSpeed_degps = ComputeDecelLimitedSpeedDegps(
+                        LocalS0Tlm.Position_deg, state.targetS0_deg, S0Motor.GetAccelLimit(), config.accelScale);
+                    state.s1CmdSpeed_degps = ComputeDecelLimitedSpeedDegps(
+                        LocalS1Tlm.Position_deg, state.targetS1_deg, S1Motor.GetAccelLimit(), config.accelScale);
                 }
             }
             else
             {
-                targetS0_deg = 0.0f;
-                targetS1_deg = 0.0f;
+                state.targetS0_deg = 0.0f;
+                state.targetS1_deg = 0.0f;
             }
         }
-        else if (!cmdViaAngle)
+        else if (!state.cmdViaAngle)
         {
-            MathErrorCodes cartToAngRet = CartToAng(targetS0_deg, targetS1_deg, Target_m);
+            MathErrorCodes cartToAngRet = CartToAng(state.targetS0_deg, state.targetS1_deg, state.target_m);
 
             if (cartToAngRet != E_OK)
             {
                 const char *reason = (cartToAngRet == E_UNREACHABLE_TOO_CLOSE) ? "close" : "far";
                 ESP_LOGE(TAG, "Unreachable target position %.2f X %.2f Y is too %s. Stopping",
-                         Target_m.x, Target_m.y, reason);
+                         state.target_m.x, state.target_m.y, reason);
                 MotionHoldCommand stopCommand = MakeStoppedHoldCommand(
-                    Pos_m, LocalS0Tlm.Position_deg, LocalS1Tlm.Position_deg);
+                    state.currentPosition_m, LocalS0Tlm.Position_deg, LocalS1Tlm.Position_deg);
 
-                EStopActive = stopCommand.pauseActive;
-                instructionComplete = stopCommand.instructionComplete;
-                currentGuidance = nullptr;
-                pumpThisMode = false;
-                PumpPurgeActive = false;
-                PumpPurgeRemaining_ms = 0;
-                cmdViaAngle = stopCommand.cmdViaAngle;
-                Target_m = stopCommand.target_m;
-                targetS0_deg = stopCommand.targetS0_deg;
-                targetS1_deg = stopCommand.targetS1_deg;
-                S0CmdSpeed_degps = stopCommand.s0CmdSpeed_degps;
-                S1CmdSpeed_degps = stopCommand.s1CmdSpeed_degps;
-                pumpSpeed_degps = stopCommand.pumpSpeed_degps;
-                forceSpeedUpdate = stopCommand.forceSpeedUpdate;
+                ApplyHoldCommand(state, stopCommand);
 
-                int drained = stopCommand.clearCommandQueue ? DrainCncCommandQueue() : 0;
+                int drained = stopCommand.clearCommandQueue ? commandRouter.DrainCncCommandQueue() : 0;
                 ESP_LOGW(TAG, "Out-of-bounds stop: cleared %d queued commands", drained);
             }
             else
@@ -539,29 +274,29 @@ void MotorControlTask(void *Parameters)
                 // Solve the quadratic to find the max speed that can be decelerated
                 // over the given angle, using a configurable fraction of the motors'
                 // acceleration capability.
-                S0CmdSpeed_degps = ComputeDecelLimitedSpeedDegps(
-                    LocalS0Tlm.Position_deg, targetS0_deg, S0Motor.GetAccelLimit(), accelScale);
-                S1CmdSpeed_degps = ComputeDecelLimitedSpeedDegps(
-                    LocalS1Tlm.Position_deg, targetS1_deg, S1Motor.GetAccelLimit(), accelScale);
+                state.s0CmdSpeed_degps = ComputeDecelLimitedSpeedDegps(
+                    LocalS0Tlm.Position_deg, state.targetS0_deg, S0Motor.GetAccelLimit(), config.accelScale);
+                state.s1CmdSpeed_degps = ComputeDecelLimitedSpeedDegps(
+                    LocalS1Tlm.Position_deg, state.targetS1_deg, S1Motor.GetAccelLimit(), config.accelScale);
 
                 // Control pump speed
-                pumpSpeed_degps =
-                    (!EStopActive && !instructionComplete && pumpThisMode &&
-                     ((Target_m - Pos_m).magnitude() < posTol_m))
-                        ? Vel_mps.magnitude() * pumpConstant_degpm
+                state.pumpSpeed_degps =
+                    (!state.pauseActive && !state.instructionComplete && state.pumpThisMode &&
+                     ((state.target_m - state.currentPosition_m).magnitude() < config.posTol_m))
+                        ? state.currentVelocity_mps.magnitude() * config.pumpConstant_degpm
                         : 0.0;
             }
         }
 
         // Apply pump purge override if active
-        if (!EStopActive && PumpPurgeActive)
+        if (!state.pauseActive && state.pumpPurgeActive)
         {
-            pumpSpeed_degps = PumpPurgeSpeed_degps;
-            PumpPurgeRemaining_ms -= MOTOR_CONTROL_PERIOD_MS;
-            if (PumpPurgeRemaining_ms <= 0)
+            state.pumpSpeed_degps = state.pumpPurgeSpeed_degps;
+            state.pumpPurgeRemaining_ms -= MOTOR_CONTROL_PERIOD_MS;
+            if (state.pumpPurgeRemaining_ms <= 0)
             {
-                PumpPurgeActive = false;
-                pumpSpeed_degps = 0.0f;
+                state.pumpPurgeActive = false;
+                state.pumpSpeed_degps = 0.0f;
                 ESP_LOGI(TAG, "Pump purge complete");
             }
         }
@@ -570,33 +305,36 @@ void MotorControlTask(void *Parameters)
         if (CNCEnabled)
         {
 
-            PumpMotor.setTargetSpeed(pumpSpeed_degps);
-            S0Motor.setTargetSpeed(S0CmdSpeed_degps);
-            S1Motor.setTargetSpeed(S1CmdSpeed_degps);
+            PumpMotor.setTargetSpeed(state.pumpSpeed_degps);
+            S0Motor.setTargetSpeed(state.s0CmdSpeed_degps);
+            S1Motor.setTargetSpeed(state.s1CmdSpeed_degps);
 
             // Force speed updates only for pause/stop events; otherwise respect acceleration limits.
-            S0Motor.UpdateSpeed(EStopActive || forceSpeedUpdate);
-            S1Motor.UpdateSpeed(EStopActive || forceSpeedUpdate);
-            PumpMotor.UpdateSpeed(EStopActive || forceSpeedUpdate);
+            S0Motor.UpdateSpeed(state.pauseActive || state.forceSpeedUpdate);
+            S1Motor.UpdateSpeed(state.pauseActive || state.forceSpeedUpdate);
+            PumpMotor.UpdateSpeed(state.pauseActive || state.forceSpeedUpdate);
         }
         else
         {
             StopCNC();
         }
 
+        Target_m = state.target_m;
+        EStopActive = state.pauseActive;
+
         // TODO improve thread safety before I lose a foot
         memcpy(&TelemetryData.PumpMotorTlm, &LocalPumpTlm, sizeof LocalPumpTlm);
         memcpy(&TelemetryData.S0MotorTlm, &LocalS0Tlm, sizeof LocalS0Tlm);
         memcpy(&TelemetryData.S1MotorTlm, &LocalS1Tlm, sizeof LocalS1Tlm);
 
-        TelemetryData.tipPos_X_m = Pos_m.x;
-        TelemetryData.tipPos_Y_m = Pos_m.y;
+        TelemetryData.tipPos_X_m = state.currentPosition_m.x;
+        TelemetryData.tipPos_Y_m = state.currentPosition_m.y;
 
-        TelemetryData.targetPos_X_m = Target_m.x;
-        TelemetryData.targetPos_Y_m = Target_m.y;
+        TelemetryData.targetPos_X_m = state.target_m.x;
+        TelemetryData.targetPos_Y_m = state.target_m.y;
 
-        TelemetryData.targetPos_S0_deg = targetS0_deg;
-        TelemetryData.targetPos_S1_deg = targetS1_deg;
+        TelemetryData.targetPos_S0_deg = state.targetS0_deg;
+        TelemetryData.targetPos_S1_deg = state.targetS1_deg;
 
         // Read the limit switch switch, adjust inhibits, and zero the device
         if (TelemetryData.S0LimitSwitch)
@@ -605,7 +343,7 @@ void MotorControlTask(void *Parameters)
             S0Motor.Zero();
             
             // Force the next instruction
-            instructionComplete = true;
+            state.instructionComplete = true;
         }
         else
         {
@@ -618,7 +356,7 @@ void MotorControlTask(void *Parameters)
             S1Motor.Zero();
 
             // Force the next instruction
-            instructionComplete = true;
+            state.instructionComplete = true;
         }
         else
         {

@@ -235,3 +235,29 @@ The refactor is complete when:
 - Motion math and pump policy have host-side unit coverage.
 - Motor hardware access and telemetry writes are isolated behind narrow interfaces.
 - Existing on-device motion behavior is preserved unless a change is intentionally documented.
+
+## Refactor Progress
+
+This checklist tracks what has actually been completed in code, not just what has been planned.
+
+- [x] **Phase 1: Name and isolate loop state** — Complete.
+  - [x] Added `MotorControlState` to own current position, velocity, target position, target angles, commanded speeds, active guidance, completion state, pump state, purge state, command mode, pause state, and force-update state.
+  - [x] Added shared state helpers, including `ApplyHoldCommand`, `IdleAtCurrentPosition`, `StopPurge`, `CompleteInstruction`, and `StartInstruction`.
+  - [x] Replaced repeated stop/out-of-bounds hold assignments with the shared hold application path.
+  - [x] Kept existing position/target/pause globals synchronized from the state snapshot for compatibility.
+- [x] **Phase 2: Extract command routing and configuration handling** — Complete.
+  - [x] Added `MotorCommandRouter` to consume immediate pause/resume/stop commands, drain the CNC queue, consume head-of-queue configuration commands, and return the next motion command only when the state is ready.
+  - [x] Moved configuration handlers into named router methods for motor limits, pump constant, acceleration scale, and pump purge.
+  - [x] Added `MotorControlConfig` for tunable pump constant, acceleration scale, and position tolerance.
+  - [x] Configuration handlers now validate command-specific payload lengths exactly before applying payload contents.
+- [x] **Phase 3: Replace central opcode switch with a guidance registry** — Complete.
+  - [x] Added `GuidanceRegistry` with opcode descriptors, expected payload sizes, typed apply functions, guidance pointers, explicit pump policy sources, and command-mode metadata.
+  - [x] Replaced the repeated guidance payload validate/copy/apply/start switch with a generic registry loader in `MotorControlTask`.
+  - [x] Preserved jog pump selection by resolving `CNC_JOG_OPCODE` pump behavior from the `JogConfig::PumpOn` payload field, including both pump-off and pump-on unit coverage.
+  - [x] Moved command-mode selection into registry metadata so go-to-angle, sine, and constant-speed commands are started as angle-mode commands by descriptor rather than by switch-case side effect.
+  - [x] Added unit coverage for registry selection, pump policy, command-mode metadata, invalid payload length handling, and unknown opcode handling.
+- [ ] **Phase 4: Extract motion planning** — Not started. Cartesian-to-angle conversion, reachability handling, and angle-mode speed limiting still live in `MotorControlTask`.
+- [ ] **Phase 5: Extract pump policy** — Not started. Normal pump-speed calculation and purge timing still live in `MotorControlTask`, although Phase 3 now makes the active command's pump-policy source explicit.
+- [ ] **Phase 6: Isolate motor hardware access** — Not started. Motor speed commands and limit updates still call `StepperMotor` directly from the task/router integration.
+- [ ] **Phase 7: Centralize telemetry publishing and synchronization** — Not started. Telemetry writes are still performed directly in the task loop.
+- [ ] **Phase 8: Limit switch and safety integration** — Not started. Limit switch handling is still interleaved with telemetry and motor-control logic.

@@ -37,6 +37,15 @@ build_and_run motion_safety_test \
     "$repo_root/Pancake_esp/main/MotionSafety.cpp" \
     "$repo_root/Pancake_esp/main/Vector2D.cpp"
 
+build_and_run motor_control_state_test \
+    "$repo_root/Tests/MotorControlStateTest.cpp" \
+    "$repo_root/Pancake_esp/main/MotionSafety.cpp" \
+    "$repo_root/Pancake_esp/main/Vector2D.cpp"
+
+build_and_run guidance_registry_test \
+    "$repo_root/Tests/GuidanceRegistryTest.cpp" \
+    "$repo_root/Pancake_esp/main/Vector2D.cpp"
+
 build_and_run go_to_angle_guidance_test \
     "$repo_root/Tests/GoToAngleGuidanceTest.cpp" \
     "$repo_root/Pancake_esp/main/PanMath.cpp" \
