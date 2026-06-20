@@ -5,6 +5,14 @@
 
 namespace
 {
+HomingConstants MakeHomeConstants()
+{
+    HomingConstants constants;
+    constants.s0HomeAngle_deg = 100.0f;
+    constants.s1HomeAngle_deg = -80.0f;
+    return constants;
+}
+
 void TestSeekS0DrivesPositiveUntilLimit()
 {
     HomingController homing;
@@ -15,6 +23,7 @@ void TestSeekS0DrivesPositiveUntilLimit()
     EXPECT_TRUE(homing.IsActive());
     EXPECT_EQ(static_cast<int>(homing.GetPhase()), static_cast<int>(HomingPhase::SeekS0Limit));
     EXPECT_TRUE(command.s0Speed_degps > 0.0f);
+    ExpectNearlyEqual(command.targetS0_deg, 210.0f, 0.0f, "seek s0 target");
     ExpectNearlyEqual(command.s1Speed_degps, 0.0f, 0.0f, "seek s0 s1 speed");
 }
 
@@ -51,36 +60,41 @@ void TestS1LimitCalibratesOnlyWithS0Limit()
 
     HomingCommand seekingS1 = homing.Update({210.0f, 11.0f, true, false});
     EXPECT_TRUE(seekingS1.s1Speed_degps < 0.0f);
+    ExpectNearlyEqual(seekingS1.targetS1_deg, -180.0f, 0.0f, "seek s1 target");
 
-    HomingCommand command = homing.Update({210.0f, 95.0f, true, true});
+    HomingCommand command = homing.Update({210.0f, -95.0f, true, true});
 
     EXPECT_TRUE(command.setS1Position);
-    ExpectNearlyEqual(command.s1PositionToSet_deg, 180.0f, 0.0f, "s1 limit calibration");
-    EXPECT_EQ(static_cast<int>(homing.GetPhase()), static_cast<int>(HomingPhase::ReturnToZero));
+    ExpectNearlyEqual(command.s1PositionToSet_deg, -180.0f, 0.0f, "s1 limit calibration");
+    EXPECT_EQ(static_cast<int>(homing.GetPhase()), static_cast<int>(HomingPhase::ReturnHome));
 }
 
-void TestReturnToZeroDrivesNegativeUntilEachStageArrives()
+void TestReturnHomeDrivesEachStageTowardHome()
 {
-    HomingController homing;
+    HomingController homing(MakeHomeConstants());
     homing.Start();
     homing.Update({42.0f, 11.0f, true, false});
-    homing.Update({210.0f, 95.0f, true, true});
+    homing.Update({210.0f, -95.0f, true, true});
 
-    HomingCommand returning = homing.Update({210.0f, 180.0f, true, true});
+    HomingCommand returning = homing.Update({210.0f, -180.0f, true, true});
     EXPECT_TRUE(returning.s0Speed_degps < 0.0f);
-    EXPECT_TRUE(returning.s1Speed_degps < 0.0f);
+    EXPECT_TRUE(returning.s1Speed_degps > 0.0f);
+    ExpectNearlyEqual(returning.targetS0_deg, 100.0f, 0.0f, "s0 home target");
+    ExpectNearlyEqual(returning.targetS1_deg, -80.0f, 0.0f, "s1 home target");
     EXPECT_FALSE(returning.complete);
 
-    HomingCommand s0Done = homing.Update({0.1f, 25.0f, false, false});
+    HomingCommand s0Done = homing.Update({100.1f, -120.0f, false, false});
     EXPECT_TRUE(s0Done.setS0Position);
-    ExpectNearlyEqual(s0Done.s0PositionToSet_deg, 0.0f, 0.0f, "s0 zero");
+    ExpectNearlyEqual(s0Done.s0PositionToSet_deg, 100.0f, 0.0f, "s0 home");
     ExpectNearlyEqual(s0Done.s0Speed_degps, 0.0f, 0.0f, "s0 done speed");
-    EXPECT_TRUE(s0Done.s1Speed_degps < 0.0f);
+    EXPECT_TRUE(s0Done.s1Speed_degps > 0.0f);
     EXPECT_FALSE(s0Done.complete);
 
-    HomingCommand complete = homing.Update({0.0f, 0.0f, false, false});
+    HomingCommand complete = homing.Update({100.0f, -80.0f, false, false});
     EXPECT_TRUE(complete.setS0Position);
     EXPECT_TRUE(complete.setS1Position);
+    ExpectNearlyEqual(complete.s0PositionToSet_deg, 100.0f, 0.0f, "s0 final home");
+    ExpectNearlyEqual(complete.s1PositionToSet_deg, -80.0f, 0.0f, "s1 final home");
     EXPECT_TRUE(complete.complete);
     EXPECT_FALSE(homing.IsActive());
 }
@@ -92,7 +106,7 @@ int main()
     TestS0LimitCalibratesS0AndSeeksS1();
     TestS1OnlyCalibratesWhenS0LimitIsStillContacting();
     TestS1LimitCalibratesOnlyWithS0Limit();
-    TestReturnToZeroDrivesNegativeUntilEachStageArrives();
+    TestReturnHomeDrivesEachStageTowardHome();
 
     PrintTestPassed("HomingController unit test");
     return EXIT_SUCCESS;

@@ -6,17 +6,18 @@ enum class HomingPhase
     Idle,
     SeekS0Limit,
     SeekS1Limit,
-    ReturnToZero,
+    ReturnHome,
 };
 
 struct HomingConstants
 {
     float s0LimitAngle_deg = 210.0f;
-    float s1LimitAngle_deg = 180.0f;
-    float zeroAngle_deg = 0.0f;
+    float s1LimitAngle_deg = -180.0f;
+    float s0HomeAngle_deg = 0.0f;
+    float s1HomeAngle_deg = 0.0f;
     float seekSpeed_degps = 10.0f;
-    float returnSpeed_degps = -10.0f;
-    float zeroTolerance_deg = 0.25f;
+    float returnSpeed_degps = 10.0f;
+    float homeTolerance_deg = 0.25f;
 };
 
 struct HomingInputs

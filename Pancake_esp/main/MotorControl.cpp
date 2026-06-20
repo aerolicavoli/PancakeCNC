@@ -32,11 +32,16 @@ static bool EStopActive = false;
 
 const float motor_step_size_deg = 0.9 / 16.0; // TODO, track down 16 error term
 static constexpr float S0_LIMIT_ANGLE_DEG = 210.0 - 17.0;
-static constexpr float S1_LIMIT_ANGLE_DEG = 180.0f;
-static constexpr float GO_HOME_S0_ANGLE_DEG = 90.0f;
-static constexpr float GO_HOME_S1_ANGLE_DEG = 180.0f;
+static constexpr float S1_LIMIT_ANGLE_DEG = -180.0f;
+static constexpr float GO_HOME_S0_ANGLE_DEG = 100.0f;
+static constexpr float GO_HOME_S1_ANGLE_DEG = -80.0f;
 static constexpr float DEFAULT_ANGLE_TOLERANCE_DEG = 0.25f;
 static constexpr AngleMotion::KeepOutZoneDeg S0_KEEP_OUT_ZONE_DEG{210.0f, 300.0f};
+static constexpr AngleMotion::TravelBoundsDeg S1_TRAVEL_BOUNDS_DEG{-270.0f, 270.0f};
+static constexpr AngleMotion::AngleMoveLimitsDeg S0_ANGLE_LIMITS_DEG{
+    true, S0_KEEP_OUT_ZONE_DEG, false, {0.0f, 0.0f}};
+static constexpr AngleMotion::AngleMoveLimitsDeg S1_ANGLE_LIMITS_DEG{
+    false, {0.0f, 0.0f}, true, S1_TRAVEL_BOUNDS_DEG};
 
 // Create motor instances
 // Step size = gear ratio * motor step size / micro step reduction
@@ -80,6 +85,37 @@ static void ApplyStoppedHold(MotorControlState &state, MotorCommandRouter &comma
 
     int drained = stopCommand.clearCommandQueue ? commandRouter.DrainCncCommandQueue() : 0;
     ESP_LOGW(TAG, "%s: cleared %d queued commands", reason, drained);
+}
+
+static bool ApplyLimitStopIfBlocked(MotorControlState &state, MotorCommandRouter &commandRouter,
+                                    Vector2D currentPosition_m, float currentS0_deg,
+                                    float currentS1_deg, float requestedS0_deg,
+                                    float requestedS1_deg,
+                                    const AngleMotion::AngleMovePlan &s0Plan,
+                                    const AngleMotion::AngleMovePlan &s1Plan,
+                                    const char *mode)
+{
+    if (s0Plan.blocked)
+    {
+        ESP_LOGE(TAG, "S0 %s move %.2f -> requested %.2f crosses keep-out %.2f..%.2f deg",
+                 mode, currentS0_deg, requestedS0_deg,
+                 S0_KEEP_OUT_ZONE_DEG.start_deg, S0_KEEP_OUT_ZONE_DEG.end_deg);
+        ApplyStoppedHold(state, commandRouter, currentPosition_m, currentS0_deg, currentS1_deg,
+                         "S0 limit stop");
+        return true;
+    }
+
+    if (s1Plan.blocked)
+    {
+        ESP_LOGE(TAG, "S1 %s move %.2f -> requested %.2f exceeds travel bounds %.2f..%.2f deg",
+                 mode, currentS1_deg, requestedS1_deg,
+                 S1_TRAVEL_BOUNDS_DEG.min_deg, S1_TRAVEL_BOUNDS_DEG.max_deg);
+        ApplyStoppedHold(state, commandRouter, currentPosition_m, currentS0_deg, currentS1_deg,
+                         "S1 limit stop");
+        return true;
+    }
+
+    return false;
 }
 
 static void RefreshLocalTelemetryAndPosition(MotorControlState &state)
@@ -169,6 +205,8 @@ void MotorControlTask(void *Parameters)
     HomingConstants homingConstants;
     homingConstants.s0LimitAngle_deg = S0_LIMIT_ANGLE_DEG;
     homingConstants.s1LimitAngle_deg = S1_LIMIT_ANGLE_DEG;
+    homingConstants.s0HomeAngle_deg = GO_HOME_S0_ANGLE_DEG;
+    homingConstants.s1HomeAngle_deg = GO_HOME_S1_ANGLE_DEG;
     HomingController homingController(homingConstants);
 
     // RBF
@@ -179,6 +217,13 @@ void MotorControlTask(void *Parameters)
         commandRouter.ConsumeImmediateCommands(state, state.currentPosition_m,
                                                LocalS0Tlm.Position_deg, LocalS1Tlm.Position_deg);
         RefreshLocalTelemetryAndPosition(state);
+
+        float plannedTargetS0_deg = LocalS0Tlm.Position_deg;
+        float plannedTargetS1_deg = LocalS1Tlm.Position_deg;
+        float plannedDeltaS0_deg = 0.0f;
+        float plannedDeltaS1_deg = 0.0f;
+        bool limitBlockedS0 = false;
+        bool limitBlockedS1 = false;
 
         if (homingController.IsActive() && (state.pauseActive || state.instructionComplete))
         {
@@ -284,6 +329,10 @@ void MotorControlTask(void *Parameters)
             state.target_m = state.currentPosition_m;
             state.targetS0_deg = homingCommand.targetS0_deg;
             state.targetS1_deg = homingCommand.targetS1_deg;
+            plannedTargetS0_deg = homingCommand.targetS0_deg;
+            plannedTargetS1_deg = homingCommand.targetS1_deg;
+            plannedDeltaS0_deg = plannedTargetS0_deg - LocalS0Tlm.Position_deg;
+            plannedDeltaS1_deg = plannedTargetS1_deg - LocalS1Tlm.Position_deg;
             state.s0CmdSpeed_degps = homingCommand.s0Speed_degps;
             state.s1CmdSpeed_degps = homingCommand.s1Speed_degps;
             state.pumpSpeed_degps = 0.0f;
@@ -313,30 +362,38 @@ void MotorControlTask(void *Parameters)
             state.pumpSpeed_degps = 0.0f;
             if (state.activeGuidance != nullptr && state.activeGuidance->GetOpCode() == CNC_GO_TO_ANGLE_OPCODE)
             {
-                state.targetS0_deg = goToAngleGuidance.Config.TargetS0_deg;
-                state.targetS1_deg = goToAngleGuidance.Config.TargetS1_deg;
+                float requestedS0_deg = goToAngleGuidance.Config.TargetS0_deg;
+                float requestedS1_deg = goToAngleGuidance.Config.TargetS1_deg;
 
-                AngleMotion::AngleMovePlan s0Plan = AngleMotion::PlanDecelLimitedMoveAvoidingKeepOutDeg(
-                    LocalS0Tlm.Position_deg, state.targetS0_deg, S0Motor.GetAccelLimit(),
-                    config.accelScale, S0_KEEP_OUT_ZONE_DEG);
-                AngleMotion::AngleMovePlan s1Plan = AngleMotion::PlanDecelLimitedMoveDeg(
-                    LocalS1Tlm.Position_deg, state.targetS1_deg, S1Motor.GetAccelLimit(), config.accelScale);
+                AngleMotion::AngleMovePlan s0Plan = AngleMotion::PlanDecelLimitedMoveWithLimitsDeg(
+                    LocalS0Tlm.Position_deg, requestedS0_deg, S0Motor.GetAccelLimit(),
+                    config.accelScale, S0_ANGLE_LIMITS_DEG);
+                AngleMotion::AngleMovePlan s1Plan = AngleMotion::PlanDecelLimitedMoveWithLimitsDeg(
+                    LocalS1Tlm.Position_deg, requestedS1_deg, S1Motor.GetAccelLimit(),
+                    config.accelScale, S1_ANGLE_LIMITS_DEG);
 
-                float s0AngleToGo_deg = AngleMotion::WrapAngleDeltaDeg(state.targetS0_deg - LocalS0Tlm.Position_deg);
-                float s1AngleToGo_deg = AngleMotion::WrapAngleDeltaDeg(state.targetS1_deg - LocalS1Tlm.Position_deg);
-                if (fabsf(s0AngleToGo_deg) <= goToAngleGuidance.Config.AngleTolerance_deg &&
-                    fabsf(s1AngleToGo_deg) <= goToAngleGuidance.Config.AngleTolerance_deg)
+                state.targetS0_deg = s0Plan.target_deg;
+                state.targetS1_deg = s1Plan.target_deg;
+                plannedTargetS0_deg = s0Plan.target_deg;
+                plannedTargetS1_deg = s1Plan.target_deg;
+                plannedDeltaS0_deg = s0Plan.delta_deg;
+                plannedDeltaS1_deg = s1Plan.delta_deg;
+                limitBlockedS0 = s0Plan.blocked;
+                limitBlockedS1 = s1Plan.blocked;
+
+                if (!s0Plan.blocked && !s1Plan.blocked &&
+                    fabsf(s0Plan.delta_deg) <= goToAngleGuidance.Config.AngleTolerance_deg &&
+                    fabsf(s1Plan.delta_deg) <= goToAngleGuidance.Config.AngleTolerance_deg)
                 {
                     state.CompleteInstruction();
                 }
-                else if (s0Plan.blocked)
+                else if (ApplyLimitStopIfBlocked(state, commandRouter, state.currentPosition_m,
+                                                 LocalS0Tlm.Position_deg, LocalS1Tlm.Position_deg,
+                                                 requestedS0_deg, requestedS1_deg, s0Plan, s1Plan,
+                                                 "angle"))
                 {
-                    ESP_LOGE(TAG, "S0 angle move %.2f -> %.2f crosses keep-out %.2f..%.2f deg",
-                             LocalS0Tlm.Position_deg, state.targetS0_deg,
-                             S0_KEEP_OUT_ZONE_DEG.start_deg, S0_KEEP_OUT_ZONE_DEG.end_deg);
-                    ApplyStoppedHold(state, commandRouter, state.currentPosition_m,
-                                     LocalS0Tlm.Position_deg, LocalS1Tlm.Position_deg,
-                                     "S0 keep-out stop");
+                    state.targetS0_deg = plannedTargetS0_deg;
+                    state.targetS1_deg = plannedTargetS1_deg;
                 }
                 else
                 {
@@ -348,6 +405,10 @@ void MotorControlTask(void *Parameters)
             {
                 state.targetS0_deg = 0.0f;
                 state.targetS1_deg = 0.0f;
+                plannedTargetS0_deg = state.targetS0_deg;
+                plannedTargetS1_deg = state.targetS1_deg;
+                plannedDeltaS0_deg = plannedTargetS0_deg - LocalS0Tlm.Position_deg;
+                plannedDeltaS1_deg = plannedTargetS1_deg - LocalS1Tlm.Position_deg;
             }
         }
         else if (!homingController.IsActive() && !state.cmdViaAngle)
@@ -365,24 +426,34 @@ void MotorControlTask(void *Parameters)
             }
             else
             {
-                AngleMotion::AngleMovePlan s0Plan = AngleMotion::PlanDecelLimitedMoveAvoidingKeepOutDeg(
-                    LocalS0Tlm.Position_deg, state.targetS0_deg, S0Motor.GetAccelLimit(),
-                    config.accelScale, S0_KEEP_OUT_ZONE_DEG);
-                AngleMotion::AngleMovePlan s1Plan = AngleMotion::PlanDecelLimitedMoveDeg(
-                    LocalS1Tlm.Position_deg, state.targetS1_deg, S1Motor.GetAccelLimit(), config.accelScale);
+                float requestedS0_deg = state.targetS0_deg;
+                float requestedS1_deg = state.targetS1_deg;
+                AngleMotion::AngleMovePlan s0Plan = AngleMotion::PlanDecelLimitedMoveWithLimitsDeg(
+                    LocalS0Tlm.Position_deg, requestedS0_deg, S0Motor.GetAccelLimit(),
+                    config.accelScale, S0_ANGLE_LIMITS_DEG);
+                AngleMotion::AngleMovePlan s1Plan = AngleMotion::PlanDecelLimitedMoveWithLimitsDeg(
+                    LocalS1Tlm.Position_deg, requestedS1_deg, S1Motor.GetAccelLimit(),
+                    config.accelScale, S1_ANGLE_LIMITS_DEG);
+                state.targetS0_deg = s0Plan.target_deg;
+                state.targetS1_deg = s1Plan.target_deg;
+                plannedTargetS0_deg = s0Plan.target_deg;
+                plannedTargetS1_deg = s1Plan.target_deg;
+                plannedDeltaS0_deg = s0Plan.delta_deg;
+                plannedDeltaS1_deg = s1Plan.delta_deg;
+                limitBlockedS0 = s0Plan.blocked;
+                limitBlockedS1 = s1Plan.blocked;
 
                 // Control motor speed by assuming a constant deceleration.
                 // Solve the quadratic to find the max speed that can be decelerated
                 // over the given angle, using a configurable fraction of the motors'
                 // acceleration capability.
-                if (s0Plan.blocked)
+                if (ApplyLimitStopIfBlocked(state, commandRouter, state.currentPosition_m,
+                                            LocalS0Tlm.Position_deg, LocalS1Tlm.Position_deg,
+                                            requestedS0_deg, requestedS1_deg, s0Plan, s1Plan,
+                                            "cartesian angle"))
                 {
-                    ESP_LOGE(TAG, "S0 cartesian angle move %.2f -> %.2f crosses keep-out %.2f..%.2f deg",
-                             LocalS0Tlm.Position_deg, state.targetS0_deg,
-                             S0_KEEP_OUT_ZONE_DEG.start_deg, S0_KEEP_OUT_ZONE_DEG.end_deg);
-                    ApplyStoppedHold(state, commandRouter, state.currentPosition_m,
-                                     LocalS0Tlm.Position_deg, LocalS1Tlm.Position_deg,
-                                     "S0 keep-out stop");
+                    state.targetS0_deg = plannedTargetS0_deg;
+                    state.targetS1_deg = plannedTargetS1_deg;
                 }
                 else
                 {
@@ -450,6 +521,12 @@ void MotorControlTask(void *Parameters)
 
         TelemetryData.targetPos_S0_deg = state.targetS0_deg;
         TelemetryData.targetPos_S1_deg = state.targetS1_deg;
+        TelemetryData.plannedTarget_S0_deg = plannedTargetS0_deg;
+        TelemetryData.plannedTarget_S1_deg = plannedTargetS1_deg;
+        TelemetryData.plannedDelta_S0_deg = plannedDeltaS0_deg;
+        TelemetryData.plannedDelta_S1_deg = plannedDeltaS1_deg;
+        TelemetryData.limitBlocked_S0 = limitBlockedS0;
+        TelemetryData.limitBlocked_S1 = limitBlockedS1;
 
         // Read the limit switches, adjust inhibits, and calibrate known switch angles.
         if (homingController.IsActive())
@@ -474,11 +551,8 @@ void MotorControlTask(void *Parameters)
 
             if (TelemetryData.S1LimitSwitch)
             {
-                S1Motor.SetDirectionalInhibit(StepperMotor::E_INHIBIT_FORWARD);
-                if (TelemetryData.S0LimitSwitch)
-                {
-                    S1Motor.SetPosition(S1_LIMIT_ANGLE_DEG);
-                }
+                S1Motor.SetDirectionalInhibit(StepperMotor::E_INHIBIT_BACKWARD);
+                S1Motor.SetPosition(S1_LIMIT_ANGLE_DEG);
 
                 // Force the next instruction
                 state.CompleteInstruction();

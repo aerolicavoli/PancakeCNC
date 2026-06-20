@@ -27,6 +27,12 @@ typedef struct {
     float targetPos_Y_m;
     float targetPos_S0_deg;
     float targetPos_S1_deg;
+    float plannedTarget_S0_deg;
+    float plannedTarget_S1_deg;
+    float plannedDelta_S0_deg;
+    float plannedDelta_S1_deg;
+    bool limitBlocked_S0;
+    bool limitBlocked_S1;
 } telemetry_data_t;
 
 extern telemetry_data_t TelemetryData;

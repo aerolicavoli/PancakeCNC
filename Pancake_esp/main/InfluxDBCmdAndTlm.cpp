@@ -510,6 +510,12 @@ void AggregateTlmTask(void *Parameters)
 
             AddDataToBuffer("targetPos_S0_deg", "data", TelemetryData.targetPos_S0_deg, timeStamp);
             AddDataToBuffer("targetPos_S1_deg", "data", TelemetryData.targetPos_S1_deg, timeStamp);
+            AddDataToBuffer("plannedTarget_S0_deg", "data", TelemetryData.plannedTarget_S0_deg, timeStamp);
+            AddDataToBuffer("plannedTarget_S1_deg", "data", TelemetryData.plannedTarget_S1_deg, timeStamp);
+            AddDataToBuffer("plannedDelta_S0_deg", "data", TelemetryData.plannedDelta_S0_deg, timeStamp);
+            AddDataToBuffer("plannedDelta_S1_deg", "data", TelemetryData.plannedDelta_S1_deg, timeStamp);
+            AddDataToBuffer("limitBlocked_S0", "data", TelemetryData.limitBlocked_S0, timeStamp);
+            AddDataToBuffer("limitBlocked_S1", "data", TelemetryData.limitBlocked_S1, timeStamp);
 
             AddDataToBuffer("S0_LimitSwitch", "data", TelemetryData.S0LimitSwitch, timeStamp);
             AddDataToBuffer("S0_Pos_deg", "data", TelemetryData.S0MotorTlm.Position_deg, timeStamp);

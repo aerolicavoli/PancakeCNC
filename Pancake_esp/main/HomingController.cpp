@@ -1,10 +1,23 @@
 #include "HomingController.h"
 
+#include <cmath>
+
 namespace
 {
-bool IsAtOrBelowZero(float position_deg, const HomingConstants &constants)
+bool IsAtTarget(float position_deg, float target_deg, const HomingConstants &constants)
 {
-    return position_deg <= constants.zeroAngle_deg + constants.zeroTolerance_deg;
+    return fabsf(position_deg - target_deg) <= constants.homeTolerance_deg;
+}
+
+float SpeedTowardTarget(float position_deg, float target_deg, const HomingConstants &constants)
+{
+    if (IsAtTarget(position_deg, target_deg, constants))
+    {
+        return 0.0f;
+    }
+
+    float speedMagnitude_degps = fabsf(constants.returnSpeed_degps);
+    return (target_deg > position_deg) ? speedMagnitude_degps : -speedMagnitude_degps;
 }
 } // namespace
 
@@ -49,6 +62,7 @@ HomingCommand HomingController::Update(const HomingInputs &inputs)
             else
             {
                 command.s0Speed_degps = constants.seekSpeed_degps;
+                command.targetS0_deg = constants.s0LimitAngle_deg;
             }
             break;
 
@@ -63,41 +77,44 @@ HomingCommand HomingController::Update(const HomingInputs &inputs)
                 command.setS1Position = true;
                 command.s1PositionToSet_deg = constants.s1LimitAngle_deg;
                 command.targetS1_deg = constants.s1LimitAngle_deg;
-                phase = HomingPhase::ReturnToZero;
+                phase = HomingPhase::ReturnHome;
             }
             else
             {
                 command.s1Speed_degps = -1.0 * constants.seekSpeed_degps;
+                command.targetS1_deg = constants.s1LimitAngle_deg;
             }
             break;
 
-        case HomingPhase::ReturnToZero:
+        case HomingPhase::ReturnHome:
         {
-            bool s0Done = IsAtOrBelowZero(inputs.s0Position_deg, constants);
-            bool s1Done = IsAtOrBelowZero(inputs.s1Position_deg, constants);
+            bool s0Done = IsAtTarget(inputs.s0Position_deg, constants.s0HomeAngle_deg, constants);
+            bool s1Done = IsAtTarget(inputs.s1Position_deg, constants.s1HomeAngle_deg, constants);
 
             if (s0Done)
             {
                 command.setS0Position = true;
-                command.s0PositionToSet_deg = constants.zeroAngle_deg;
-                command.targetS0_deg = constants.zeroAngle_deg;
+                command.s0PositionToSet_deg = constants.s0HomeAngle_deg;
+                command.targetS0_deg = constants.s0HomeAngle_deg;
             }
             else
             {
-                command.s0Speed_degps = constants.returnSpeed_degps;
-                command.targetS0_deg = constants.zeroAngle_deg;
+                command.s0Speed_degps = SpeedTowardTarget(inputs.s0Position_deg,
+                                                          constants.s0HomeAngle_deg, constants);
+                command.targetS0_deg = constants.s0HomeAngle_deg;
             }
 
             if (s1Done)
             {
                 command.setS1Position = true;
-                command.s1PositionToSet_deg = constants.zeroAngle_deg;
-                command.targetS1_deg = constants.zeroAngle_deg;
+                command.s1PositionToSet_deg = constants.s1HomeAngle_deg;
+                command.targetS1_deg = constants.s1HomeAngle_deg;
             }
             else
             {
-                command.s1Speed_degps = constants.returnSpeed_degps;
-                command.targetS1_deg = constants.zeroAngle_deg;
+                command.s1Speed_degps = SpeedTowardTarget(inputs.s1Position_deg,
+                                                          constants.s1HomeAngle_deg, constants);
+                command.targetS1_deg = constants.s1HomeAngle_deg;
             }
 
             if (s0Done && s1Done)
