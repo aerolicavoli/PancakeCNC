@@ -4,12 +4,13 @@
 #include <string>
 #include <vector>
 #include <ctime>
+#include <cstdint>
 
 // Simple structure to hold a command extracted from InfluxDB.
 // The payload string remains base64 encoded as received from the CSV
 // response so that the caller can decide how and when to decode it.
 struct InfluxDBCommand {
-    time_t timestamp;      // UTC timestamp of the command
+    int64_t timestamp_ms;  // UTC timestamp of the command in milliseconds
     std::string payload;   // Base64 encoded payload
 };
 

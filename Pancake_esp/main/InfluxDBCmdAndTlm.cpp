@@ -113,14 +113,14 @@ esp_http_client_handle_t TlmHttpClient = NULL;
 esp_http_client_handle_t CmdHttpClient = NULL;
 
 // Maximum size of the HTTP response buffer. Adjust as needed.
-#define MAX_HTTP_OUTPUT_BUFFER 4096
+#define MAX_HTTP_OUTPUT_BUFFER 8192
 
 // Global variables for handling fragmented HTTP responses
 static char *output_buffer;  // Buffer to store HTTP response
 static int output_len;       // Length of the stored response
 
 // Variable to track the timestamp of the last received message
-time_t last_message_timestamp = 0;
+int64_t last_message_timestamp_ms = 0;
 
 // Helper function to format time for logging
 void format_time_string(time_t raw_time, char *buffer, size_t buffer_size) {
@@ -173,19 +173,19 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt) {
                 } else {
                     // Process in chronological order
                     std::sort(cmds.begin(), cmds.end(), [](const InfluxDBCommand &a, const InfluxDBCommand &b){
-                        return a.timestamp < b.timestamp;
+                        return a.timestamp_ms < b.timestamp_ms;
                     });
                     for (const auto &cmd : cmds) {
-                        if (cmd.timestamp <= last_message_timestamp) {
+                        if (cmd.timestamp_ms <= last_message_timestamp_ms) {
                             continue;
                         }
                         raw_cmd_payload_t new_payload{};
-                        new_payload.timestamp = cmd.timestamp;
+                        new_payload.timestamp_ms = cmd.timestamp_ms;
                         strncpy(new_payload.payload, cmd.payload.c_str(), sizeof(new_payload.payload) - 1);
                         if (xQueueSend(cmd_queue_fast_decode, &new_payload, 0) == pdTRUE) {
-                            last_message_timestamp = cmd.timestamp;
+                            last_message_timestamp_ms = cmd.timestamp_ms;
                             char time_str[50];
-                            format_time_string(last_message_timestamp, time_str, sizeof(time_str));
+                            format_time_string((time_t)(last_message_timestamp_ms / 1000), time_str, sizeof(time_str));
                             ESP_LOGD(TAG, "Posted payload to decode queue. Time: %s, Payload: %s", time_str, new_payload.payload);
                         } else {
                             ESP_LOGE(TAG, "Failed to post command to decode queue.");
@@ -259,13 +259,17 @@ void AddLogToBuffer(const char *message)
     escapedMessage[escapedIdx] = '\0';
 
     xSemaphoreTake(TlmBufferMutex, portMAX_DELAY);
-    int written = snprintf(
-        WorkingTlmBuffer + WorkingTlmBufferIdx, BUFFER_SIZE - WorkingTlmBufferIdx,
-        "logs,level=info,source=myApp message=\"%s\" %lld\n", escapedMessage, timeStamp);
-    if (written > 0 && WorkingTlmBufferIdx + written < BUFFER_SIZE)
+    if (WorkingTlmBufferIdx < BUFFER_SIZE)
+    {
+        size_t remaining = BUFFER_SIZE - WorkingTlmBufferIdx;
+        int written = snprintf(
+            WorkingTlmBuffer + WorkingTlmBufferIdx, remaining,
+            "logs,level=info,source=myApp message=\"%s\" %lld\n", escapedMessage, timeStamp);
+        if (written > 0 && (size_t)written < remaining)
         {
             WorkingTlmBufferIdx += written;
         }
+    }
     xSemaphoreGive(TlmBufferMutex);
     // else: drop silently
 }
@@ -273,20 +277,19 @@ void AddLogToBuffer(const char *message)
 void AddDataToBuffer(const char *Measurement, const char *Field, float Value, int64_t TimeStamp)
 {
     xSemaphoreTake(TlmBufferMutex, portMAX_DELAY);
-    int written =
-        snprintf(WorkingTlmBuffer + WorkingTlmBufferIdx, BUFFER_SIZE - WorkingTlmBufferIdx,
-                 "%s,location=us-midwest %s=%.5f %lld\n", Measurement, Field, Value, TimeStamp);
-
-    xSemaphoreGive(TlmBufferMutex);
-    if (written > 0)
+    if (WorkingTlmBufferIdx < BUFFER_SIZE)
     {
-        if (WorkingTlmBufferIdx + written < BUFFER_SIZE)
+        size_t remaining = BUFFER_SIZE - WorkingTlmBufferIdx;
+        int written =
+            snprintf(WorkingTlmBuffer + WorkingTlmBufferIdx, remaining,
+                     "%s,location=us-midwest %s=%.5f %lld\n", Measurement, Field, Value, TimeStamp);
+        if (written > 0 && (size_t)written < remaining)
         {
             WorkingTlmBufferIdx += written;
         }
         // else: drop silently
     }
-    // else: drop silently
+    xSemaphoreGive(TlmBufferMutex);
 }
 
 void CmdAndTlmInit(void)
@@ -416,16 +419,16 @@ void TransmitTlmTask(void *Parameters)
     {
         // Copy the telemetry buffer to a transmit buffer
         bool has_new_data = false;
+        // Take the buffer mutex and copy to transmit buffer
+        xSemaphoreTake(TlmBufferMutex, portMAX_DELAY);
         if (WorkingTlmBufferIdx > 0)
         {
-            // Take the buffer mutex and copy to transmit buffer
-            xSemaphoreTake(TlmBufferMutex, portMAX_DELAY);
             TransmitTlmBufferIdx = WorkingTlmBufferIdx;
             memcpy(TransmitTlmBuffer, WorkingTlmBuffer, WorkingTlmBufferIdx);
-            xSemaphoreGive(TlmBufferMutex);
             WorkingTlmBufferIdx = 0;
             has_new_data = true;
         }
+        xSemaphoreGive(TlmBufferMutex);
         
         // Create a new HTTP client if needed
         if (TlmHttpClient == NULL)
@@ -563,6 +566,10 @@ void SendDataToInflux(const char *Data, size_t Length)
         {
             char buf[256];
             int len = esp_http_client_read_response(TlmHttpClient, buf, sizeof(buf) - 1);
+            if (len < 0)
+            {
+                len = 0;
+            }
             buf[len] = 0; // NUL-terminate
             ESP_LOGE(TAG, "InfluxDB error %d: %s", status, buf);
         }

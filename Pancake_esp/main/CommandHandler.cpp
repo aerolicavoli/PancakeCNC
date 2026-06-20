@@ -33,11 +33,11 @@ static inline bool is_cnc_opcode(uint8_t op)
 
 void CommandHandlerInit(void)
 {
-    cmd_queue_fast_decode = xQueueCreate(5, sizeof(raw_cmd_payload_t));
+    cmd_queue_fast_decode = xQueueCreate(32, sizeof(raw_cmd_payload_t));
     assert(cmd_queue_fast_decode != NULL);
-    cmd_queue_cnc = xQueueCreate(8, sizeof(decoded_cmd_payload_t));
+    cmd_queue_cnc = xQueueCreate(32, sizeof(decoded_cmd_payload_t));
     assert(cmd_queue_cnc != NULL);
-    cmd_queue_now = xQueueCreate(4, sizeof(uint8_t));
+    cmd_queue_now = xQueueCreate(8, sizeof(uint8_t));
     assert(cmd_queue_now != NULL);
 }
 
@@ -105,7 +105,7 @@ void CommandHandlerTask(void *param)
         if (xQueueReceive(cmd_queue_fast_decode, &item, portMAX_DELAY) == pdTRUE)
         {
             decoded_cmd_payload_t decoded{};
-            decoded.timestamp = item.timestamp;
+            decoded.timestamp_ms = item.timestamp_ms;
 
             // Base64 decode (into instructions buffer)
             size_t out_len = 0;

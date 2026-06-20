@@ -33,8 +33,8 @@ static bool EStopActive = false;
 const float motor_step_size_deg = 0.9 / 16.0; // TODO, track down 16 error term
 static constexpr float S0_LIMIT_ANGLE_DEG = 210.0 - 17.0;
 static constexpr float S1_LIMIT_ANGLE_DEG = -180.0f;
-static constexpr float GO_HOME_S0_ANGLE_DEG = 100.0f;
-static constexpr float GO_HOME_S1_ANGLE_DEG = -80.0f;
+static constexpr float GO_HOME_S0_ANGLE_DEG = 120.0f;
+static constexpr float GO_HOME_S1_ANGLE_DEG = -115.0f;
 static constexpr float DEFAULT_ANGLE_TOLERANCE_DEG = 0.25f;
 static constexpr AngleMotion::KeepOutZoneDeg S0_KEEP_OUT_ZONE_DEG{210.0f, 300.0f};
 static constexpr AngleMotion::TravelBoundsDeg S1_TRAVEL_BOUNDS_DEG{-270.0f, 270.0f};
@@ -49,7 +49,7 @@ static StepperMotor S0Motor(S0_MOTOR_PULSE, S0_MOTOR_DIR, 800.0, 50.0, motor_ste
                             "S0MOTOR",false);
 static StepperMotor S1Motor(S1_MOTOR_PULSE, S1_MOTOR_DIR, 800.0, 50.0, motor_step_size_deg * 10.0 / 24.0,
                             "S1MOTOR", true);
-static StepperMotor PumpMotor(PUMP_MOTOR_PULSE, PUMP_MOTOR_DIR, 10.0, 150, motor_step_size_deg, "PUMPMOTOR", true);
+static StepperMotor PumpMotor(PUMP_MOTOR_PULSE, PUMP_MOTOR_DIR, 10.0, 600, motor_step_size_deg, "PUMPMOTOR", true);
 
 static bool ResolveJogPumpEnabled(const GeneralGuidance &guidance)
 {
@@ -495,7 +495,7 @@ void MotorControlTask(void *Parameters)
             S0Motor.setTargetSpeed(state.s0CmdSpeed_degps);
             S1Motor.setTargetSpeed(state.s1CmdSpeed_degps);
 
-            // Force speed updates only for pause/stop events; otherwise respect acceleration limits.
+            // Force speed updates for pause and calibration events; stop decelerates normally.
             S0Motor.UpdateSpeed(state.pauseActive || state.forceSpeedUpdate);
             S1Motor.UpdateSpeed(state.pauseActive || state.forceSpeedUpdate);
             PumpMotor.UpdateSpeed(state.pauseActive || state.forceSpeedUpdate);

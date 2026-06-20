@@ -42,7 +42,7 @@ void TestApplyHoldCommandCentralizesStopState()
     EXPECT_FALSE(state.pumpPurgeActive);
     EXPECT_EQ(state.pumpPurgeRemaining_ms, 0);
     EXPECT_TRUE(state.cmdViaAngle);
-    EXPECT_TRUE(state.forceSpeedUpdate);
+    EXPECT_FALSE(state.forceSpeedUpdate);
     ExpectNearlyEqual(state.target_m.x, 0.5f, 0.0f, "hold target x");
     ExpectNearlyEqual(state.targetS0_deg, 7.0f, 0.0f, "hold target s0");
     ExpectNearlyEqual(state.pumpSpeed_degps, 0.0f, 0.0f, "hold pump speed");

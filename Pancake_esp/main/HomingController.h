@@ -15,8 +15,8 @@ struct HomingConstants
     float s1LimitAngle_deg = -180.0f;
     float s0HomeAngle_deg = 0.0f;
     float s1HomeAngle_deg = 0.0f;
-    float seekSpeed_degps = 10.0f;
-    float returnSpeed_degps = 10.0f;
+    float seekSpeed_degps = 20.0f;
+    float returnSpeed_degps = 20.0f;
     float homeTolerance_deg = 0.25f;
 };
 

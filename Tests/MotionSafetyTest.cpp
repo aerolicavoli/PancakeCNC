@@ -18,7 +18,7 @@ void TestStoppedHoldCommandPreservesCurrentPosition()
     EXPECT_TRUE(stopCommand.instructionComplete);
     EXPECT_TRUE(stopCommand.cmdViaAngle);
     EXPECT_TRUE(stopCommand.clearCommandQueue);
-    EXPECT_TRUE(stopCommand.forceSpeedUpdate);
+    EXPECT_FALSE(stopCommand.forceSpeedUpdate);
 
     ExpectNearlyEqual(stopCommand.target_m.x, current_position_m.x, 0.0f, "hold target x");
     ExpectNearlyEqual(stopCommand.target_m.y, current_position_m.y, 0.0f, "hold target y");

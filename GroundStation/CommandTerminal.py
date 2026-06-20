@@ -46,6 +46,7 @@ INFLUXDB_URL = os.environ.get("INFLUXDB_URL")
 INFLUXDB_TOKEN = os.environ.get("INFLUXDB_TOKEN")
 INFLUXDB_ORG = os.environ.get("INFLUXDB_ORG")
 INFLUXDB_CMD_BUCKET = os.environ.get("INFLUXDB_CMD_BUCKET")
+_last_write_timestamp_ms = 0
 
 RUN_FILE_COMPLETION_ROOTS = [".", "GroundStation/GCode"]
 
@@ -500,6 +501,7 @@ def _run_file_path_candidates(text: str) -> List[str]:
 
 def _write_packet(packet: bytes) -> None:
     import requests
+    global _last_write_timestamp_ms
 
     url = f"{INFLUXDB_URL}/api/v2/write"
     params = {
@@ -513,6 +515,9 @@ def _write_packet(packet: bytes) -> None:
     }
     b64 = base64.b64encode(packet).decode("ascii")
     timestamp = int(time.time() * 1000)
+    if timestamp <= _last_write_timestamp_ms:
+        timestamp = _last_write_timestamp_ms + 1
+    _last_write_timestamp_ms = timestamp
     line = f"cmd data=\"{b64}\" {timestamp}"
     resp = requests.post(url, params=params, data=line, headers=headers, timeout=5)
     resp.raise_for_status()

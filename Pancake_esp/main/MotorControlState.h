@@ -7,7 +7,7 @@
 
 struct MotorControlConfig
 {
-    float pumpConstant_degpm = 1.0e5f;
+    float pumpConstant_degpm = 3.0e4f;
     float accelScale = 0.01f;
     float posTol_m = 1.0f;
 };

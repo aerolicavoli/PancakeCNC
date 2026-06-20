@@ -245,18 +245,49 @@ void StepperMotor::UpdateSpeed(bool ForceUpdate)
         gptimer_alarm_config_t alarm_config = {};
         alarm_config.alarm_count = alarm_count;
         alarm_config.flags.auto_reload_on_alarm = true;
-        CUSTOM_ERROR_CHECK(gptimer_set_alarm_action(m_PulseTimer, &alarm_config));
-
-        if (!m_TimerRunning)
+        esp_err_t err = gptimer_set_alarm_action(m_PulseTimer, &alarm_config);
+        if (err != ESP_OK)
         {
-            CUSTOM_ERROR_CHECK(gptimer_start(m_PulseTimer));
-            m_TimerRunning = true;
+            ESP_LOGE(name, "Failed to set step timer alarm: %s", esp_err_to_name(err));
+            m_CurrentSpeed_degps = 0.0f;
         }
     }
-    else if (m_TimerRunning)
+
+    if (m_CurrentSpeed_degps != 0.0 && !m_TimerRunning)
     {
-        CUSTOM_ERROR_CHECK(gptimer_stop(m_PulseTimer));
-        m_TimerRunning = false;
+        esp_err_t err = gptimer_start(m_PulseTimer);
+        if (err == ESP_OK)
+        {
+            m_TimerRunning = true;
+        }
+        else if (err == ESP_ERR_INVALID_STATE)
+        {
+            m_TimerRunning = true;
+            ESP_LOGW(name, "Step timer already running while state was stopped");
+        }
+        else
+        {
+            ESP_LOGE(name, "Failed to start step timer: %s", esp_err_to_name(err));
+            m_CurrentSpeed_degps = 0.0f;
+        }
+    }
+
+    if (m_CurrentSpeed_degps == 0.0 && m_TimerRunning)
+    {
+        esp_err_t err = gptimer_stop(m_PulseTimer);
+        if (err == ESP_OK)
+        {
+            m_TimerRunning = false;
+        }
+        else if (err == ESP_ERR_INVALID_STATE)
+        {
+            m_TimerRunning = false;
+            ESP_LOGW(name, "Step timer already stopped while state was running");
+        }
+        else
+        {
+            ESP_LOGE(name, "Failed to stop step timer: %s", esp_err_to_name(err));
+        }
     }
 
     setDirection(m_CurrentSpeed_degps >= 0);

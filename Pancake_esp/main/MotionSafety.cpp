@@ -8,7 +8,7 @@ MotionHoldCommand MakeStoppedHoldCommand(Vector2D currentPosition_m, float curre
     command.instructionComplete = true;
     command.cmdViaAngle = true;
     command.clearCommandQueue = true;
-    command.forceSpeedUpdate = true;
+    command.forceSpeedUpdate = false;
     command.target_m = currentPosition_m;
     command.targetS0_deg = currentS0_deg;
     command.targetS1_deg = currentS1_deg;

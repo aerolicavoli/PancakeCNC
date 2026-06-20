@@ -13,6 +13,7 @@ const char *kInfluxResponse =
     "#default,_result,,,,,,,,\n"
     ",result,table,_start,_stop,_time,_value,_field,_measurement,device\n"
     ",_result,0,2026-01-01T00:00:00Z,2026-01-01T00:10:00Z,2026-01-01T00:01:02Z,EgE=,payload,commands,pancake\n"
+    ",_result,0,2026-01-01T00:00:00Z,2026-01-01T00:10:00Z,2026-01-01T00:03:04.012Z,EgM=,payload,commands,pancake\n"
     "\n"
     ",_result,0,2026-01-01T00:00:00Z,2026-01-01T00:10:00Z,2026-01-01T00:03:04.123Z,EgI=,payload,commands,pancake\n";
 
@@ -25,19 +26,21 @@ void TestParseLatestCommand()
 {
     InfluxDBCommand cmd{};
     EXPECT_TRUE(parse_influxdb_command(kInfluxResponse, cmd));
-    EXPECT_EQ(cmd.timestamp, static_cast<time_t>(1767225784));
+    EXPECT_EQ(cmd.timestamp_ms, static_cast<int64_t>(1767225784123));
     EXPECT_EQ(cmd.payload, std::string("EgI="));
 }
 
 void TestParseCommandListPreservesOrder()
 {
     std::vector<InfluxDBCommand> commands;
-    EXPECT_EQ(parse_influxdb_command_list(kInfluxResponse, commands), static_cast<size_t>(2));
-    EXPECT_EQ(commands.size(), static_cast<size_t>(2));
-    EXPECT_EQ(commands[0].timestamp, static_cast<time_t>(1767225662));
+    EXPECT_EQ(parse_influxdb_command_list(kInfluxResponse, commands), static_cast<size_t>(3));
+    EXPECT_EQ(commands.size(), static_cast<size_t>(3));
+    EXPECT_EQ(commands[0].timestamp_ms, static_cast<int64_t>(1767225662000));
     EXPECT_EQ(commands[0].payload, std::string("EgE="));
-    EXPECT_EQ(commands[1].timestamp, static_cast<time_t>(1767225784));
-    EXPECT_EQ(commands[1].payload, std::string("EgI="));
+    EXPECT_EQ(commands[1].timestamp_ms, static_cast<int64_t>(1767225784012));
+    EXPECT_EQ(commands[1].payload, std::string("EgM="));
+    EXPECT_EQ(commands[2].timestamp_ms, static_cast<int64_t>(1767225784123));
+    EXPECT_EQ(commands[2].payload, std::string("EgI="));
 }
 
 void TestMalformedResponsesAreRejected()
