@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <cstring>
 
-constexpr size_t GUIDANCE_REGISTRY_MAX_ENTRIES = 10;
+constexpr size_t GUIDANCE_REGISTRY_MAX_ENTRIES = 12;
 
 enum class PumpPolicySource
 {

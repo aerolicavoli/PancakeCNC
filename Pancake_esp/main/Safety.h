@@ -11,10 +11,20 @@
 #include "GPIOAssignments.h"
 #include "Telemetry.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 void SafetyInit();
 void SafetyStart();
 void SafetyTask(void *Parameters);
 void EnableMotors();
 void DisableMotors();
 void SetLimitSwitchPolicy(bool HardStopOnLimit);
+void SetPumpMotorInUse(bool InUse);
+
+#ifdef __cplusplus
+}
+#endif
+
 #endif // SAFETY_H

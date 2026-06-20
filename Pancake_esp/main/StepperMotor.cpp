@@ -85,7 +85,11 @@ void StepperMotor::setDirection(bool dir)
 // Set target speed
 void StepperMotor::setTargetSpeed(float Speed_degps)
 {
-    if (Speed_degps > m_SpeedLimit_degps)
+    if (!std::isfinite(Speed_degps))
+    {
+        m_TargetSpeed_degps = 0.0f;
+    }
+    else if (Speed_degps > m_SpeedLimit_degps)
     {
         m_TargetSpeed_degps = m_SpeedLimit_degps;
     }
@@ -132,18 +136,25 @@ bool IRAM_ATTR StepperMotor::onStepTimerCallback(gptimer_handle_t timer,
 
 void StepperMotor::Zero(void)
 {
-    motor_tlm_t tempTlm;
-    GetTlm(&tempTlm);
-    m_AngleOffset_deg -= tempTlm.Position_deg;
+    SetPosition(0.0f);
+}
+
+void StepperMotor::SetPosition(float Position_deg)
+{
+    portENTER_CRITICAL(&m_CriticalMemoryMux);
+    int32_t steps = m_stepCount;
+    m_AngleOffset_deg = Position_deg - (steps * m_StepSize_deg);
+    portEXIT_CRITICAL(&m_CriticalMemoryMux);
 }
 
 void StepperMotor::GetTlm(motor_tlm_t *Tlm)
 {
     portENTER_CRITICAL(&m_CriticalMemoryMux);
     int32_t steps = m_stepCount;
+    float angleOffset_deg = m_AngleOffset_deg;
     portEXIT_CRITICAL(&m_CriticalMemoryMux);
 
-    Tlm->Position_deg = steps * m_StepSize_deg + m_AngleOffset_deg;
+    Tlm->Position_deg = steps * m_StepSize_deg + angleOffset_deg;
     Tlm->Speed_degps = m_CurrentSpeed_degps;
     Tlm->TargetSpeed_degps = m_TargetSpeed_degps;
 }
@@ -163,6 +174,14 @@ float StepperMotor::GetSpeedLimit() const { return m_SpeedLimit_degps; }
 // Update the motor pulse freq
 void StepperMotor::UpdateSpeed(bool ForceUpdate)
 {
+    if (!std::isfinite(m_TargetSpeed_degps))
+    {
+        m_TargetSpeed_degps = 0.0f;
+    }
+    if (!std::isfinite(m_CurrentSpeed_degps))
+    {
+        m_CurrentSpeed_degps = 0.0f;
+    }
 
     if (ForceUpdate)
     {
@@ -202,6 +221,20 @@ void StepperMotor::UpdateSpeed(bool ForceUpdate)
     EnforceDirectionalInhibit();
 
     // Update timer alarm value
+    if (!std::isfinite(m_CurrentSpeed_degps))
+    {
+        m_CurrentSpeed_degps = 0.0f;
+    }
+
+    if (m_CurrentSpeed_degps != 0.0)
+    {
+        float absSpeed_hz = fabs(m_CurrentSpeed_degps) / m_StepSize_deg;
+        if (!std::isfinite(absSpeed_hz) || absSpeed_hz <= 0.0f)
+        {
+            m_CurrentSpeed_degps = 0.0f;
+        }
+    }
+
     if (m_CurrentSpeed_degps != 0.0)
     {
         float absSpeed_hz = fabs(m_CurrentSpeed_degps) / m_StepSize_deg;

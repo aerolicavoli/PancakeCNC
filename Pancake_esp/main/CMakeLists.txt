@@ -1,5 +1,7 @@
 idf_component_register(SRCS "StepperMotor.cpp"
+ "AngleMotion.cpp"
  "CrashDebug.cpp"
+ "HomingController.cpp"
  "ArchimedeanSpiral.cpp"
  "Vector2D.cpp"
  "pancake_esp_main.cpp"

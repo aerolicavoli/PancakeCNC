@@ -1,6 +1,8 @@
 #include "MotorControl.h"
+#include "AngleMotion.h"
 #include "MotorCommandRouter.h"
 #include "MotorControlState.h"
+#include "HomingController.h"
 #include "JogGuidance.h"
 #include "ArcGuidance.h"
 #include "RectangleGuidance.h"
@@ -8,7 +10,9 @@
 #include "GuidanceRegistry.h"
 #include "CNCOpCodes.h"
 #include "MotionSafety.h"
+#include "Safety.h"
 
+#include <cmath>
 #include <cstring>
 
 const char *TAG = "CNCControl";
@@ -27,6 +31,12 @@ static bool EStopActive = false;
 // CNC instructions now arrive via cmd_queue_cnc (decoded_cmd_payload_t)
 
 const float motor_step_size_deg = 0.9 / 16.0; // TODO, track down 16 error term
+static constexpr float S0_LIMIT_ANGLE_DEG = 210.0 - 17.0;
+static constexpr float S1_LIMIT_ANGLE_DEG = 180.0f;
+static constexpr float GO_HOME_S0_ANGLE_DEG = 90.0f;
+static constexpr float GO_HOME_S1_ANGLE_DEG = 180.0f;
+static constexpr float DEFAULT_ANGLE_TOLERANCE_DEG = 0.25f;
+static constexpr AngleMotion::KeepOutZoneDeg S0_KEEP_OUT_ZONE_DEG{210.0f, 300.0f};
 
 // Create motor instances
 // Step size = gear ratio * motor step size / micro step reduction
@@ -34,41 +44,19 @@ static StepperMotor S0Motor(S0_MOTOR_PULSE, S0_MOTOR_DIR, 800.0, 50.0, motor_ste
                             "S0MOTOR",false);
 static StepperMotor S1Motor(S1_MOTOR_PULSE, S1_MOTOR_DIR, 800.0, 50.0, motor_step_size_deg * 10.0 / 24.0,
                             "S1MOTOR", true);
-static StepperMotor PumpMotor(PUMP_MOTOR_PULSE, PUMP_MOTOR_DIR, 200.0, 200, motor_step_size_deg, "PUMPMOTOR", true);
-
-float Sign(float value) {
-    return std::copysign(1.0f, value);
-}
-
-static float WrapAngleDeltaDeg(float angle)
-{
-    while (angle > 180.0f)
-    {
-        angle -= 360.0f;
-    }
-    while (angle < -180.0f)
-    {
-        angle += 360.0f;
-    }
-    return angle;
-}
-
-static float ComputeDecelLimitedSpeedDegps(float currentAngle_deg, float targetAngle_deg,
-                                           float accelLimit_degps2, float accelScale)
-{
-    float angleToGo_deg = WrapAngleDeltaDeg(targetAngle_deg - currentAngle_deg);
-    float accel = accelLimit_degps2 * accelScale;
-    if (accel <= 0.0f || angleToGo_deg == 0.0f)
-    {
-        return 0.0f;
-    }
-    return accel * Sign(angleToGo_deg) * sqrtf(2.0f * fabsf(angleToGo_deg) / accel);
-}
-
+static StepperMotor PumpMotor(PUMP_MOTOR_PULSE, PUMP_MOTOR_DIR, 10.0, 150, motor_step_size_deg, "PUMPMOTOR", true);
 
 static bool ResolveJogPumpEnabled(const GeneralGuidance &guidance)
 {
     return static_cast<const JogGuidance &>(guidance).Config.PumpOn != 0;
+}
+
+static bool ApplyGoHomeGuidanceConfig(GeneralGuidance &guidance, const uint8_t *payload)
+{
+    (void)payload;
+    GoToAngleConfig config{GO_HOME_S0_ANGLE_DEG, GO_HOME_S1_ANGLE_DEG, DEFAULT_ANGLE_TOLERANCE_DEG};
+    static_cast<GoToAngleGuidance &>(guidance).ApplyConfig(config);
+    return true;
 }
 
 static void LogGuidanceLoadError(const GuidanceLoadError &error)
@@ -83,6 +71,28 @@ static void LogGuidanceLoadError(const GuidanceLoadError &error)
              error.opcode, (unsigned)error.expectedPayloadLength, (unsigned)error.actualPayloadLength);
 }
 
+static void ApplyStoppedHold(MotorControlState &state, MotorCommandRouter &commandRouter,
+                             Vector2D currentPosition_m, float currentS0_deg, float currentS1_deg,
+                             const char *reason)
+{
+    MotionHoldCommand stopCommand = MakeStoppedHoldCommand(currentPosition_m, currentS0_deg, currentS1_deg);
+    ApplyHoldCommand(state, stopCommand);
+
+    int drained = stopCommand.clearCommandQueue ? commandRouter.DrainCncCommandQueue() : 0;
+    ESP_LOGW(TAG, "%s: cleared %d queued commands", reason, drained);
+}
+
+static void RefreshLocalTelemetryAndPosition(MotorControlState &state)
+{
+    PumpMotor.GetTlm(&LocalPumpTlm);
+    S0Motor.GetTlm(&LocalS0Tlm);
+    S1Motor.GetTlm(&LocalS1Tlm);
+
+    AngToCart(LocalS0Tlm.Position_deg, LocalS1Tlm.Position_deg, LocalS0Tlm.Speed_degps,
+              LocalS1Tlm.Speed_degps, state.currentPosition_m, state.currentVelocity_mps);
+    Pos_m = state.currentPosition_m;
+    Vel_mps = state.currentVelocity_mps;
+}
 
 void MotorControlInit()
 {
@@ -109,7 +119,7 @@ void MotorControlInit()
     Target_m = Pos_m;
 }
 
-void MotorControlStart() { xTaskCreate(MotorControlTask, TAG, 8000, NULL, 1, NULL); }
+void MotorControlStart() { xTaskCreate(MotorControlTask, TAG, 10000, NULL, 1, NULL); }
 
 void MotorControlTask(void *Parameters)
 {
@@ -146,6 +156,8 @@ void MotorControlTask(void *Parameters)
                                ApplyTypedGuidanceConfig<RectangleGuidance, RectangleConfig>, &rectangleGuidance, nullptr});
     guidanceRegistry.Register({CNC_GO_TO_ANGLE_OPCODE, sizeof(GoToAngleConfig), PumpPolicySource::AlwaysOff, GuidanceCommandMode::Angle,
                                ApplyTypedGuidanceConfig<GoToAngleGuidance, GoToAngleConfig>, &goToAngleGuidance, nullptr});
+    guidanceRegistry.Register({CNC_GO_HOME_OPCODE, 0, PumpPolicySource::AlwaysOff, GuidanceCommandMode::Angle,
+                               ApplyGoHomeGuidanceConfig, &goToAngleGuidance, nullptr});
     guidanceRegistry.Register({CNC_WAIT_OPCODE, sizeof(WaitGuidance::WaitConfig), PumpPolicySource::AlwaysOff, GuidanceCommandMode::Cartesian,
                                ApplyTypedGuidanceConfig<WaitGuidance, WaitGuidance::WaitConfig>, &waitGuidance, nullptr});
     guidanceRegistry.Register({CNC_SINE_OPCODE, sizeof(SineGuidance::SineConfig), PumpPolicySource::AlwaysOff, GuidanceCommandMode::Angle,
@@ -154,6 +166,10 @@ void MotorControlTask(void *Parameters)
                                ApplyTypedGuidanceConfig<ConstantSpeed, ConstantSpeed::ConstantSpeedConfig>, &constantSpeed, nullptr});
 
     MotorCommandRouter commandRouter(cmd_queue_now, cmd_queue_cnc, TAG);
+    HomingConstants homingConstants;
+    homingConstants.s0LimitAngle_deg = S0_LIMIT_ANGLE_DEG;
+    homingConstants.s1LimitAngle_deg = S1_LIMIT_ANGLE_DEG;
+    HomingController homingController(homingConstants);
 
     // RBF
     CNCEnabled = true;
@@ -162,26 +178,32 @@ void MotorControlTask(void *Parameters)
         state.BeginLoop();
         commandRouter.ConsumeImmediateCommands(state, state.currentPosition_m,
                                                LocalS0Tlm.Position_deg, LocalS1Tlm.Position_deg);
-        // Copy local tlm
-        PumpMotor.GetTlm(&LocalPumpTlm);
-        S0Motor.GetTlm(&LocalS0Tlm);
-        S1Motor.GetTlm(&LocalS1Tlm);
+        RefreshLocalTelemetryAndPosition(state);
 
-        // Compute the current CNC position
-        AngToCart(LocalS0Tlm.Position_deg, LocalS1Tlm.Position_deg, LocalS0Tlm.Speed_degps,
-                  LocalS1Tlm.Speed_degps, state.currentPosition_m, state.currentVelocity_mps);
-        Pos_m = state.currentPosition_m;
-        Vel_mps = state.currentVelocity_mps;
+        if (homingController.IsActive() && (state.pauseActive || state.instructionComplete))
+        {
+            homingController.Cancel();
+            SetLimitSwitchPolicy(true);
+            state.CompleteInstruction();
+            ESP_LOGW(TAG, "Homing cancelled");
+        }
 
         // Apply any pending configuration commands (non-blocking)
-        if (!state.pauseActive)
+        if (!state.pauseActive && !homingController.IsActive())
         {
             commandRouter.ConsumePendingConfigurationCommands(config, state, S0Motor, S1Motor, PumpMotor);
         }
 
+        const bool readyForNextMotionCommand =
+            state.instructionComplete && !state.pauseActive && !homingController.IsActive();
+        if (readyForNextMotionCommand)
+        {
+            state.IdleAtCurrentPosition(state.currentPosition_m, LocalS0Tlm.Position_deg, LocalS1Tlm.Position_deg);
+        }
+
         // If ready for the next instruction, check queue without blocking
         decoded_cmd_payload_t decoded{};
-        if (commandRouter.ReceiveNextMotionCommand(state.instructionComplete && !state.pauseActive, decoded))
+        if (commandRouter.ReceiveNextMotionCommand(readyForNextMotionCommand, decoded))
         {
             size_t payloadLength = decoded.instruction_length;
             if (payloadLength > CMD_INSTRUCTION_PAYLOAD_MAX_LEN)
@@ -193,25 +215,89 @@ void MotorControlTask(void *Parameters)
                 const uint8_t *payload = decoded.instructions + 2;
                 ESP_LOGI(TAG, "Configuring OpCode: 0x%02X", decoded.opcode);
 
-                GuidanceLoadResult loadResult{};
-                GuidanceLoadError loadError{};
-                bool configApplied = guidanceRegistry.Load(decoded.opcode, payload, payloadLength, loadResult, loadError);
-
-                if (!configApplied || loadResult.guidance == nullptr)
+                if (decoded.opcode == CNC_HOME_OPCODE)
                 {
-                    LogGuidanceLoadError(loadError);
-                    state.instructionComplete = true;
+                    if (payloadLength != 0)
+                    {
+                        ESP_LOGE(TAG, "Invalid payload length for OpCode 0x%02X: expected 0 got %u",
+                                 decoded.opcode, (unsigned)payloadLength);
+                        state.instructionComplete = true;
+                    }
+                    else
+                    {
+                        homingController.Start();
+                        SetLimitSwitchPolicy(false);
+                        state.StopPurge();
+                        state.instructionComplete = false;
+                        state.activeGuidance = nullptr;
+                        state.pumpThisMode = false;
+                        state.cmdViaAngle = true;
+                        state.pumpSpeed_degps = 0.0f;
+                        ESP_LOGI(TAG, "Starting homing operation");
+                    }
                 }
                 else
                 {
-                    state.StartInstruction(loadResult.guidance, loadResult.pumpEnabled,
-                                           loadResult.commandMode == GuidanceCommandMode::Angle);
-                    ESP_LOGI(TAG, "Starting OpCode: 0x%02X", decoded.opcode);
+                    GuidanceLoadResult loadResult{};
+                    GuidanceLoadError loadError{};
+                    bool configApplied = guidanceRegistry.Load(decoded.opcode, payload, payloadLength, loadResult, loadError);
+
+                    if (!configApplied || loadResult.guidance == nullptr)
+                    {
+                        LogGuidanceLoadError(loadError);
+                        state.instructionComplete = true;
+                    }
+                    else
+                    {
+                        state.StartInstruction(loadResult.guidance, loadResult.pumpEnabled,
+                                               loadResult.commandMode == GuidanceCommandMode::Angle);
+                        ESP_LOGI(TAG, "Starting OpCode: 0x%02X", decoded.opcode);
+                    }
                 }
             }
         }
 
-        if (!state.pauseActive && !state.instructionComplete && state.activeGuidance != nullptr)
+        if (homingController.IsActive() && !state.pauseActive)
+        {
+            HomingCommand homingCommand = homingController.Update({LocalS0Tlm.Position_deg,
+                                                                   LocalS1Tlm.Position_deg,
+                                                                   TelemetryData.S0LimitSwitch,
+                                                                   TelemetryData.S1LimitSwitch});
+
+            if (homingCommand.setS0Position)
+            {
+                S0Motor.SetPosition(homingCommand.s0PositionToSet_deg);
+            }
+            if (homingCommand.setS1Position)
+            {
+                S1Motor.SetPosition(homingCommand.s1PositionToSet_deg);
+            }
+            if (homingCommand.setS0Position || homingCommand.setS1Position)
+            {
+                RefreshLocalTelemetryAndPosition(state);
+            }
+
+            state.cmdViaAngle = true;
+            state.instructionComplete = homingCommand.complete;
+            state.activeGuidance = nullptr;
+            state.pumpThisMode = false;
+            state.target_m = state.currentPosition_m;
+            state.targetS0_deg = homingCommand.targetS0_deg;
+            state.targetS1_deg = homingCommand.targetS1_deg;
+            state.s0CmdSpeed_degps = homingCommand.s0Speed_degps;
+            state.s1CmdSpeed_degps = homingCommand.s1Speed_degps;
+            state.pumpSpeed_degps = 0.0f;
+            state.forceSpeedUpdate = homingCommand.setS0Position || homingCommand.setS1Position ||
+                                     homingCommand.complete;
+
+            if (homingCommand.complete)
+            {
+                state.CompleteInstruction();
+                SetLimitSwitchPolicy(true);
+                ESP_LOGI(TAG, "Homing complete");
+            }
+        }
+        else if (!state.pauseActive && !state.instructionComplete && state.activeGuidance != nullptr)
         {
             state.instructionComplete = state.activeGuidance->GetTargetPosition(
                 MOTOR_CONTROL_PERIOD_MS, state.target_m, state.target_m, state.cmdViaAngle, state.s0CmdSpeed_degps, state.s1CmdSpeed_degps);
@@ -222,7 +308,7 @@ void MotorControlTask(void *Parameters)
             state.IdleAtCurrentPosition(state.currentPosition_m, LocalS0Tlm.Position_deg, LocalS1Tlm.Position_deg);
         }
 
-        if (!state.instructionComplete && !state.pauseActive && state.cmdViaAngle)
+        if (!homingController.IsActive() && !state.instructionComplete && !state.pauseActive && state.cmdViaAngle)
         {
             state.pumpSpeed_degps = 0.0f;
             if (state.activeGuidance != nullptr && state.activeGuidance->GetOpCode() == CNC_GO_TO_ANGLE_OPCODE)
@@ -230,19 +316,32 @@ void MotorControlTask(void *Parameters)
                 state.targetS0_deg = goToAngleGuidance.Config.TargetS0_deg;
                 state.targetS1_deg = goToAngleGuidance.Config.TargetS1_deg;
 
-                float s0AngleToGo_deg = WrapAngleDeltaDeg(state.targetS0_deg - LocalS0Tlm.Position_deg);
-                float s1AngleToGo_deg = WrapAngleDeltaDeg(state.targetS1_deg - LocalS1Tlm.Position_deg);
+                AngleMotion::AngleMovePlan s0Plan = AngleMotion::PlanDecelLimitedMoveAvoidingKeepOutDeg(
+                    LocalS0Tlm.Position_deg, state.targetS0_deg, S0Motor.GetAccelLimit(),
+                    config.accelScale, S0_KEEP_OUT_ZONE_DEG);
+                AngleMotion::AngleMovePlan s1Plan = AngleMotion::PlanDecelLimitedMoveDeg(
+                    LocalS1Tlm.Position_deg, state.targetS1_deg, S1Motor.GetAccelLimit(), config.accelScale);
+
+                float s0AngleToGo_deg = AngleMotion::WrapAngleDeltaDeg(state.targetS0_deg - LocalS0Tlm.Position_deg);
+                float s1AngleToGo_deg = AngleMotion::WrapAngleDeltaDeg(state.targetS1_deg - LocalS1Tlm.Position_deg);
                 if (fabsf(s0AngleToGo_deg) <= goToAngleGuidance.Config.AngleTolerance_deg &&
                     fabsf(s1AngleToGo_deg) <= goToAngleGuidance.Config.AngleTolerance_deg)
                 {
                     state.CompleteInstruction();
                 }
+                else if (s0Plan.blocked)
+                {
+                    ESP_LOGE(TAG, "S0 angle move %.2f -> %.2f crosses keep-out %.2f..%.2f deg",
+                             LocalS0Tlm.Position_deg, state.targetS0_deg,
+                             S0_KEEP_OUT_ZONE_DEG.start_deg, S0_KEEP_OUT_ZONE_DEG.end_deg);
+                    ApplyStoppedHold(state, commandRouter, state.currentPosition_m,
+                                     LocalS0Tlm.Position_deg, LocalS1Tlm.Position_deg,
+                                     "S0 keep-out stop");
+                }
                 else
                 {
-                    state.s0CmdSpeed_degps = ComputeDecelLimitedSpeedDegps(
-                        LocalS0Tlm.Position_deg, state.targetS0_deg, S0Motor.GetAccelLimit(), config.accelScale);
-                    state.s1CmdSpeed_degps = ComputeDecelLimitedSpeedDegps(
-                        LocalS1Tlm.Position_deg, state.targetS1_deg, S1Motor.GetAccelLimit(), config.accelScale);
+                    state.s0CmdSpeed_degps = s0Plan.speed_degps;
+                    state.s1CmdSpeed_degps = s1Plan.speed_degps;
                 }
             }
             else
@@ -251,7 +350,7 @@ void MotorControlTask(void *Parameters)
                 state.targetS1_deg = 0.0f;
             }
         }
-        else if (!state.cmdViaAngle)
+        else if (!homingController.IsActive() && !state.cmdViaAngle)
         {
             MathErrorCodes cartToAngRet = CartToAng(state.targetS0_deg, state.targetS1_deg, state.target_m);
 
@@ -260,36 +359,48 @@ void MotorControlTask(void *Parameters)
                 const char *reason = (cartToAngRet == E_UNREACHABLE_TOO_CLOSE) ? "close" : "far";
                 ESP_LOGE(TAG, "Unreachable target position %.2f X %.2f Y is too %s. Stopping",
                          state.target_m.x, state.target_m.y, reason);
-                MotionHoldCommand stopCommand = MakeStoppedHoldCommand(
-                    state.currentPosition_m, LocalS0Tlm.Position_deg, LocalS1Tlm.Position_deg);
-
-                ApplyHoldCommand(state, stopCommand);
-
-                int drained = stopCommand.clearCommandQueue ? commandRouter.DrainCncCommandQueue() : 0;
-                ESP_LOGW(TAG, "Out-of-bounds stop: cleared %d queued commands", drained);
+                ApplyStoppedHold(state, commandRouter, state.currentPosition_m,
+                                 LocalS0Tlm.Position_deg, LocalS1Tlm.Position_deg,
+                                 "Out-of-bounds stop");
             }
             else
             {
+                AngleMotion::AngleMovePlan s0Plan = AngleMotion::PlanDecelLimitedMoveAvoidingKeepOutDeg(
+                    LocalS0Tlm.Position_deg, state.targetS0_deg, S0Motor.GetAccelLimit(),
+                    config.accelScale, S0_KEEP_OUT_ZONE_DEG);
+                AngleMotion::AngleMovePlan s1Plan = AngleMotion::PlanDecelLimitedMoveDeg(
+                    LocalS1Tlm.Position_deg, state.targetS1_deg, S1Motor.GetAccelLimit(), config.accelScale);
+
                 // Control motor speed by assuming a constant deceleration.
                 // Solve the quadratic to find the max speed that can be decelerated
                 // over the given angle, using a configurable fraction of the motors'
                 // acceleration capability.
-                state.s0CmdSpeed_degps = ComputeDecelLimitedSpeedDegps(
-                    LocalS0Tlm.Position_deg, state.targetS0_deg, S0Motor.GetAccelLimit(), config.accelScale);
-                state.s1CmdSpeed_degps = ComputeDecelLimitedSpeedDegps(
-                    LocalS1Tlm.Position_deg, state.targetS1_deg, S1Motor.GetAccelLimit(), config.accelScale);
+                if (s0Plan.blocked)
+                {
+                    ESP_LOGE(TAG, "S0 cartesian angle move %.2f -> %.2f crosses keep-out %.2f..%.2f deg",
+                             LocalS0Tlm.Position_deg, state.targetS0_deg,
+                             S0_KEEP_OUT_ZONE_DEG.start_deg, S0_KEEP_OUT_ZONE_DEG.end_deg);
+                    ApplyStoppedHold(state, commandRouter, state.currentPosition_m,
+                                     LocalS0Tlm.Position_deg, LocalS1Tlm.Position_deg,
+                                     "S0 keep-out stop");
+                }
+                else
+                {
+                    state.s0CmdSpeed_degps = s0Plan.speed_degps;
+                    state.s1CmdSpeed_degps = s1Plan.speed_degps;
 
-                // Control pump speed
-                state.pumpSpeed_degps =
-                    (!state.pauseActive && !state.instructionComplete && state.pumpThisMode &&
-                     ((state.target_m - state.currentPosition_m).magnitude() < config.posTol_m))
-                        ? state.currentVelocity_mps.magnitude() * config.pumpConstant_degpm
-                        : 0.0;
+                    // Control pump speed
+                    state.pumpSpeed_degps =
+                        (!state.pauseActive && !state.instructionComplete && state.pumpThisMode &&
+                         ((state.target_m - state.currentPosition_m).magnitude() < config.posTol_m))
+                            ? state.currentVelocity_mps.magnitude() * config.pumpConstant_degpm
+                            : 0.0;
+                }
             }
         }
 
         // Apply pump purge override if active
-        if (!state.pauseActive && state.pumpPurgeActive)
+        if (!state.pauseActive && !homingController.IsActive() && state.pumpPurgeActive)
         {
             state.pumpSpeed_degps = state.pumpPurgeSpeed_degps;
             state.pumpPurgeRemaining_ms -= MOTOR_CONTROL_PERIOD_MS;
@@ -300,6 +411,10 @@ void MotorControlTask(void *Parameters)
                 ESP_LOGI(TAG, "Pump purge complete");
             }
         }
+
+        const bool pumpMotorInUse =
+            (fabsf(state.pumpSpeed_degps) > 0.001f) || (fabsf(LocalPumpTlm.Speed_degps) > 0.001f);
+        SetPumpMotorInUse(CNCEnabled && !EStopActive && pumpMotorInUse);
 
         // Command Speed
         if (CNCEnabled)
@@ -336,31 +451,42 @@ void MotorControlTask(void *Parameters)
         TelemetryData.targetPos_S0_deg = state.targetS0_deg;
         TelemetryData.targetPos_S1_deg = state.targetS1_deg;
 
-        // Read the limit switch switch, adjust inhibits, and zero the device
-        if (TelemetryData.S0LimitSwitch)
-        {
-            S0Motor.SetDirectionalInhibit(StepperMotor::E_INHIBIT_BACKWARD);
-            S0Motor.Zero();
-            
-            // Force the next instruction
-            state.instructionComplete = true;
-        }
-        else
+        // Read the limit switches, adjust inhibits, and calibrate known switch angles.
+        if (homingController.IsActive())
         {
             S0Motor.SetDirectionalInhibit(StepperMotor::E_NO_INHIBIT);
-        }
-
-        if (TelemetryData.S1LimitSwitch)
-        {
-            S1Motor.SetDirectionalInhibit(StepperMotor::E_INHIBIT_FORWARD);
-            S1Motor.Zero();
-
-            // Force the next instruction
-            state.instructionComplete = true;
+            S1Motor.SetDirectionalInhibit(StepperMotor::E_NO_INHIBIT);
         }
         else
         {
-            S1Motor.SetDirectionalInhibit(StepperMotor::E_NO_INHIBIT);
+            if (TelemetryData.S0LimitSwitch)
+            {
+                S0Motor.SetDirectionalInhibit(StepperMotor::E_INHIBIT_FORWARD);
+                S0Motor.SetPosition(S0_LIMIT_ANGLE_DEG);
+
+                // Force the next instruction
+                state.CompleteInstruction();
+            }
+            else
+            {
+                S0Motor.SetDirectionalInhibit(StepperMotor::E_NO_INHIBIT);
+            }
+
+            if (TelemetryData.S1LimitSwitch)
+            {
+                S1Motor.SetDirectionalInhibit(StepperMotor::E_INHIBIT_FORWARD);
+                if (TelemetryData.S0LimitSwitch)
+                {
+                    S1Motor.SetPosition(S1_LIMIT_ANGLE_DEG);
+                }
+
+                // Force the next instruction
+                state.CompleteInstruction();
+            }
+            else
+            {
+                S1Motor.SetDirectionalInhibit(StepperMotor::E_NO_INHIBIT);
+            }
         }
 
         vTaskDelay(motorUpdatePeriod_Ticks);

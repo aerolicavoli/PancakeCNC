@@ -32,6 +32,7 @@ class StepperMotor
     void InitializeTimers(uint32_t MotorControlPeriod_ms);
     void logStatus(void);
     void SetDirectionalInhibit(direction_inhibit_type_t Inhibit);
+    void SetPosition(float Position_deg);
     void Zero(void);
     
     // ISR callback for the step timer

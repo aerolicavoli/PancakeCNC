@@ -19,6 +19,11 @@ float NonNegativeInset(float inset_m)
 {
     return (inset_m > 0.0f) ? inset_m : 0.0f;
 }
+
+bool IsFiniteVector(Vector2D value)
+{
+    return std::isfinite(value.x) && std::isfinite(value.y);
+}
 } // namespace
 
 /*
@@ -38,7 +43,7 @@ float NonNegativeInset(float inset_m)
      (S0 Ang) *-----------> X-axis
 */
 const float C_S0Length_m = 0.22;
-const float C_S1Length_m = 0.119f;
+const float C_S1Length_m = 0.126f;
 const float C_S0L2_PLUS_S1L2_m2 = C_S0Length_m * C_S0Length_m + C_S1Length_m * C_S1Length_m;
 const float C_S0L2_MINUS_S1L2_m2 = C_S0Length_m * C_S0Length_m - C_S1Length_m * C_S1Length_m;
 const float C_Inv_2_TIMES_S0L_TIMES_S1L_1pm2 = 1.0f / (2.0f * C_S0Length_m * C_S1Length_m);
@@ -80,8 +85,17 @@ void AngToCart(float S0Ang_deg, float S1Ang_deg, float S0Rate_degps, float S1Rat
 
 MathErrorCodes CartToAng(float &S0Ang_deg, float &S1Ang_deg, Vector2D Pos_m)
 {
+    if (!IsFiniteVector(Pos_m))
+    {
+        return E_UNREACHABLE_TOO_FAR;
+    }
+
     // Compute the squared distance from the origin to the target point (r^2)
     float targetDistSquared_m2 = dot(Pos_m, Pos_m);
+    if (!std::isfinite(targetDistSquared_m2))
+    {
+        return E_UNREACHABLE_TOO_FAR;
+    }
 
     if (targetDistSquared_m2 < EPSILON)
     {

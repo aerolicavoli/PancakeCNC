@@ -54,7 +54,7 @@ class WaitGuidance : public GeneralGuidance
     WaitConfig Config;
 
     // Common to all guidance types
-    uint8_t GetOpCode() const { return CNC_WAIT_OPCODE; }
+    uint8_t GetOpCode() const override { return CNC_WAIT_OPCODE; }
     const void *GetConfig() const override { return &Config; }
     size_t GetConfigLength() const override { return sizeof(Config); }
 
@@ -99,7 +99,7 @@ class SineGuidance : public GeneralGuidance
     SineConfig Config;
 
     // Common to all guidance types
-    uint8_t GetOpCode() const { return CNC_SINE_OPCODE; }
+    uint8_t GetOpCode() const override { return CNC_SINE_OPCODE; }
     const void *GetConfig() const override { return &Config; }
     size_t GetConfigLength() const override { return sizeof(Config); }
 
@@ -144,7 +144,7 @@ class ConstantSpeed : public GeneralGuidance
     ConstantSpeedConfig Config;
 
     // Common to all guidance types
-    uint8_t GetOpCode() const { return CNC_CONSTANT_SPEED_OPCODE; }
+    uint8_t GetOpCode() const override { return CNC_CONSTANT_SPEED_OPCODE; }
     const void *GetConfig() const override { return &Config; }
     size_t GetConfigLength() const override { return sizeof(Config); }
 

@@ -1,7 +1,8 @@
 
 #include "Safety.h"
 
-bool HardStopOnLimitSwitch = true;
+static volatile bool HardStopOnLimitSwitch = true;
+static volatile bool PumpMotorInUse = false;
 temperature_sensor_handle_t ESPTempSensorHandle = NULL;
 
 void SafetyInit()
@@ -13,10 +14,11 @@ void SafetyInit()
     // Init the motor enables
     gpio_reset_pin(S0S1_MOTOR_ENABLE);
     gpio_set_direction(S0S1_MOTOR_ENABLE, GPIO_MODE_OUTPUT);
+    gpio_set_level(S0S1_MOTOR_ENABLE, false);
 
-    // Init the limit switches
     gpio_reset_pin(PUMP_MOTOR_ENABLE);
     gpio_set_direction(PUMP_MOTOR_ENABLE, GPIO_MODE_OUTPUT);
+    gpio_set_level(PUMP_MOTOR_ENABLE, false);
 
     // Configure the limit switch pin as an input
     gpio_config_t io_conf = {
@@ -89,8 +91,8 @@ void SafetyTask(void *Parameters)
 
 void EnableMotors()
 {
-    gpio_set_level(PUMP_MOTOR_ENABLE, true);
     gpio_set_level(S0S1_MOTOR_ENABLE, true);
+    gpio_set_level(PUMP_MOTOR_ENABLE, PumpMotorInUse);
 }
 
 void DisableMotors()
@@ -103,4 +105,14 @@ void SetLimitSwitchPolicy(bool HardStopOnLimit)
 {
     // Set with single CPU operation
     HardStopOnLimitSwitch = HardStopOnLimit;
+}
+
+void SetPumpMotorInUse(bool InUse)
+{
+    // Set with single CPU operation. SafetyTask also applies this request every cycle.
+    PumpMotorInUse = InUse;
+
+    bool hardStopActive = HardStopOnLimitSwitch &&
+                          (gpio_get_level(S0_LIMIT_SWITCH) || gpio_get_level(S1_LIMIT_SWITCH));
+    gpio_set_level(PUMP_MOTOR_ENABLE, InUse && !hardStopActive);
 }

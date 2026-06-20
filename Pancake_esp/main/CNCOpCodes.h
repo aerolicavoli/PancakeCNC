@@ -14,3 +14,5 @@ constexpr uint8_t CNC_PUMP_PURGE_OPCODE = 0x19;
 constexpr uint8_t CNC_CONFIG_ACCEL_SCALE_OPCODE = 0x1A;
 constexpr uint8_t CNC_RECTANGLE_OPCODE = 0x1B;
 constexpr uint8_t CNC_GO_TO_ANGLE_OPCODE = 0x1C;
+constexpr uint8_t CNC_HOME_OPCODE = 0x1D;
+constexpr uint8_t CNC_GO_HOME_OPCODE = 0x1E;
