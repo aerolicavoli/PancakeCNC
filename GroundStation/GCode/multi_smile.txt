@@ -1,0 +1,16 @@
+# Print multiple smiley pancakes from one run_file.
+# Each included pattern uses cartesian coordinates relative to local_origin.
+
+local_origin OriginX_m=0.06 OriginY_m=0.14
+run_file GroundStation/GCode/smily_pattern.txt
+
+local_origin OriginX_m=0.18 OriginY_m=0.14
+run_file GroundStation/GCode/smily_pattern.txt
+
+local_origin OriginX_m=0.06 OriginY_m=0.27
+run_file GroundStation/GCode/smily_pattern.txt
+
+local_origin OriginX_m=0.18 OriginY_m=0.27
+run_file GroundStation/GCode/smily_pattern.txt
+
+local_origin OriginX_m=0.0 OriginY_m=0.0

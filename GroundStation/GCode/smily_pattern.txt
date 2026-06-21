@@ -1,0 +1,36 @@
+# Smiley pattern centered at local origin 
+
+# Start by asserting CNC settings
+SetMotorLimits motor=S0 accel=20.0 speed=500.0
+SetMotorLimits motor=S1 accel=20.0 speed=500.0
+SetMotorLimits motor=Pump accel=20.0 speed=800.0
+set_pump_constant pumpConstant_degpm=200.0
+set_accel_scale accelScale=1.0
+
+# Draw pancake perimeter
+cnc_jog LinearSpeed_mps=0.03 TargetX_m=0 TargetY_m=0.05 PumpOn=0
+cnc_arc StartTheta_rad=0 EndTheta_rad=6.28 Radius_m=0.05 CenterX_m=0 CenterY_m=0 LinearSpeed_mps=0.1
+wait timeout_ms=2000
+
+# Jog to the mouth Start
+cnc_jog LinearSpeed_mps=0.03 TargetX_m=0.025 TargetY_m=0 PumpOn=0
+
+
+# mouth
+cnc_arc StartTheta_rad=1.9 EndTheta_rad=4.6 Radius_m=0.025 CenterX_m=0 CenterY_m=0 LinearSpeed_mps=0.1
+wait timeout_ms=2000
+
+# Jog to eye
+cnc_jog LinearSpeed_mps=0.03 TargetX_m=-0.015 TargetY_m=0.035 PumpOn=0
+cnc_arc StartTheta_rad=0 EndTheta_rad=6.28 Radius_m=0.01 CenterX_m=-0.015 CenterY_m=0.045 LinearSpeed_mps=0.05
+wait timeout_ms=2000
+
+cnc_jog LinearSpeed_mps=0.03 TargetX_m=0.015 TargetY_m=0.035 PumpOn=0
+cnc_arc StartTheta_rad=0 EndTheta_rad=6.28 Radius_m=0.01 CenterX_m=0.015 CenterY_m=0.045 LinearSpeed_mps=0.05
+
+cnc_go_home
+wait timeout_ms=2000
+
+# Fill in the pancake
+cnc_spiral CenterY_m=0 CenterX_m=0 MaxRadius_m=0.05 SpiralConstant_mprad=0.001 SpiralRate_radps=10.0 LinearSpeed_mps=0.5
+cnc_go_home

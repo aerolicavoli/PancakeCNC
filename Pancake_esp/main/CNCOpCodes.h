@@ -16,3 +16,4 @@ constexpr uint8_t CNC_RECTANGLE_OPCODE = 0x1B;
 constexpr uint8_t CNC_GO_TO_ANGLE_OPCODE = 0x1C;
 constexpr uint8_t CNC_HOME_OPCODE = 0x1D;
 constexpr uint8_t CNC_GO_HOME_OPCODE = 0x1E;
+constexpr uint8_t CNC_SET_LOCAL_ORIGIN_OPCODE = 0x1F;

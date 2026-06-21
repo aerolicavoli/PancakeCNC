@@ -57,6 +57,7 @@ LOCAL_COMMANDS = {
     "resume",
     "stop",
     "crash_diagnostic",
+    "local_origin",
 }
 
 
@@ -205,30 +206,81 @@ def get_reachable_rectangle_corners(inset_m: float = 0.0) -> list[Vec2]:
     ]
 
 
-def parse_program(path: Path) -> list[ParsedCommand]:
+def _apply_local_origin(cmd: str, args: dict[str, Any], local_origin: Vec2) -> dict[str, Any]:
+    """Return args with firmware-style local origin applied to cartesian fields."""
+    adjusted = dict(args)
+    if cmd == "cnc_jog":
+        adjusted["TargetX_m"] = float(adjusted["TargetX_m"]) + local_origin.x
+        adjusted["TargetY_m"] = float(adjusted["TargetY_m"]) + local_origin.y
+    elif cmd in {"cnc_arc", "cnc_spiral"}:
+        adjusted["CenterX_m"] = float(adjusted["CenterX_m"]) + local_origin.x
+        adjusted["CenterY_m"] = float(adjusted["CenterY_m"]) + local_origin.y
+    return adjusted
+
+
+def _resolve_run_file_path(path_text: str, including_path: Path) -> Path:
+    path = Path(path_text)
+    if path.is_absolute():
+        return path
+    candidate = including_path.parent / path
+    if candidate.exists():
+        return candidate
+    return path
+
+
+def _parse_program(path: Path, include_stack: list[Path], local_origin: Vec2) -> tuple[list[ParsedCommand], Vec2]:
+    resolved_path = path.resolve()
+    if resolved_path in include_stack:
+        chain = " -> ".join(str(item) for item in [*include_stack, resolved_path])
+        raise IntentError(f"recursive run_file include disallowed: {chain}")
+
     commands: list[ParsedCommand] = []
-    for line_no, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
+    include_stack.append(resolved_path)
+    lines = resolved_path.read_text(encoding="utf-8").splitlines()
+    try:
+        for line_no, raw_line in enumerate(lines, start=1):
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
 
-        parts = shlex.split(line)
-        if not parts:
-            continue
+            parts = shlex.split(line)
+            if not parts:
+                continue
 
-        cmd = _canonical_cmd_name(parts[0])
-        if len(parts) >= 2 and parts[1].lower() in {"help", "-h", "?"}:
-            continue
+            cmd = _canonical_cmd_name(parts[0])
+            if len(parts) >= 2 and parts[1].lower() in {"help", "-h", "?"}:
+                continue
 
-        if cmd in {"ask_to_continue", "e"}:
-            args: dict[str, Any] = {}
-        else:
-            args = _parse_kv_tokens(parts[1:])
+            if cmd == "run_file":
+                if len(parts) < 2:
+                    raise IntentError(f"line {line_no}: run_file requires a path")
+                child_path = _resolve_run_file_path(parts[1], resolved_path)
+                child_commands, local_origin = _parse_program(child_path, include_stack, local_origin)
+                commands.extend(child_commands)
+                continue
 
-        if cmd in DEFAULTS:
-            args = {**DEFAULTS[cmd], **args}
+            if cmd in {"ask_to_continue", "e"}:
+                args: dict[str, Any] = {}
+            else:
+                args = _parse_kv_tokens(parts[1:])
 
-        commands.append(ParsedCommand(line_no=line_no, raw=line, cmd=cmd, args=args))
+            if cmd in DEFAULTS:
+                args = {**DEFAULTS[cmd], **args}
+
+            if cmd == "local_origin":
+                local_origin = Vec2(float(args.get("OriginX_m", 0.0)), float(args.get("OriginY_m", 0.0)))
+            else:
+                args = _apply_local_origin(cmd, args, local_origin)
+
+            commands.append(ParsedCommand(line_no=line_no, raw=line, cmd=cmd, args=args))
+    finally:
+        include_stack.pop()
+
+    return commands, local_origin
+
+
+def parse_program(path: Path) -> list[ParsedCommand]:
+    commands, _ = _parse_program(path, [], Vec2(0.0, 0.0))
     return commands
 
 

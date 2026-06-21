@@ -24,6 +24,7 @@ motor_tlm_t LocalPumpTlm;
 Vector2D Pos_m{0.0f, 0.0f};
 Vector2D Vel_mps{0.0f, 0.0f};
 Vector2D Target_m{0.0f, 0.0f};
+Vector2D LocalOrigin_m{0.0f, 0.0f};
 
 bool CNCEnabled = false;
 static bool EStopActive = false;
@@ -62,6 +63,34 @@ static bool ApplyGoHomeGuidanceConfig(GeneralGuidance &guidance, const uint8_t *
     GoToAngleConfig config{GO_HOME_S0_ANGLE_DEG, GO_HOME_S1_ANGLE_DEG, DEFAULT_ANGLE_TOLERANCE_DEG};
     static_cast<GoToAngleGuidance &>(guidance).ApplyConfig(config);
     return true;
+}
+
+struct LocalOriginConfig
+{
+    float OriginX_m;
+    float OriginY_m;
+};
+
+static void ApplyLocalOriginToCartesianConfig(uint8_t opcode, uint8_t *payload, Vector2D localOrigin_m)
+{
+    if (opcode == CNC_JOG_OPCODE)
+    {
+        JogConfig *config = reinterpret_cast<JogConfig *>(payload);
+        config->TargetX_m += localOrigin_m.x;
+        config->TargetY_m += localOrigin_m.y;
+    }
+    else if (opcode == CNC_ARC_OPCODE)
+    {
+        ArcConfig *config = reinterpret_cast<ArcConfig *>(payload);
+        config->CenterX_m += localOrigin_m.x;
+        config->CenterY_m += localOrigin_m.y;
+    }
+    else if (opcode == CNC_SPIRAL_OPCODE)
+    {
+        SpiralConfig *config = reinterpret_cast<SpiralConfig *>(payload);
+        config->CenterX_m += localOrigin_m.x;
+        config->CenterY_m += localOrigin_m.y;
+    }
 }
 
 static void LogGuidanceLoadError(const GuidanceLoadError &error)
@@ -257,7 +286,7 @@ void MotorControlTask(void *Parameters)
             }
             else
             {
-                const uint8_t *payload = decoded.instructions + 2;
+                uint8_t *payload = decoded.instructions + 2;
                 ESP_LOGI(TAG, "Configuring OpCode: 0x%02X", decoded.opcode);
 
                 if (decoded.opcode == CNC_HOME_OPCODE)
@@ -281,8 +310,25 @@ void MotorControlTask(void *Parameters)
                         ESP_LOGI(TAG, "Starting homing operation");
                     }
                 }
+                else if (decoded.opcode == CNC_SET_LOCAL_ORIGIN_OPCODE)
+                {
+                    if (payloadLength != sizeof(LocalOriginConfig))
+                    {
+                        ESP_LOGE(TAG, "Invalid payload length for OpCode 0x%02X: expected %u got %u",
+                                 decoded.opcode, (unsigned)sizeof(LocalOriginConfig), (unsigned)payloadLength);
+                    }
+                    else
+                    {
+                        LocalOriginConfig originConfig{};
+                        memcpy(&originConfig, payload, sizeof(originConfig));
+                        LocalOrigin_m = {originConfig.OriginX_m, originConfig.OriginY_m};
+                        ESP_LOGI(TAG, "Local origin set to %.3f, %.3f m", LocalOrigin_m.x, LocalOrigin_m.y);
+                    }
+                    state.instructionComplete = true;
+                }
                 else
                 {
+                    ApplyLocalOriginToCartesianConfig(decoded.opcode, payload, LocalOrigin_m);
                     GuidanceLoadResult loadResult{};
                     GuidanceLoadError loadError{};
                     bool configApplied = guidanceRegistry.Load(decoded.opcode, payload, payloadLength, loadResult, loadError);

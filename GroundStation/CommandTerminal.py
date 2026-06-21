@@ -11,6 +11,7 @@ Simplified syntax (no leading / or -a):
   cnc_go_to_angle TargetS0_deg=0 TargetS1_deg=0 AngleTolerance_deg=0.25
   cnc_home
   cnc_go_home
+  local_origin OriginX_m=0.0 OriginY_m=0.0
 
 Run a newline-delimited program file:
   run_file TestProgram.txt
@@ -71,6 +72,7 @@ CNC_OPCODES: Dict[str, int] = {
     "cnc_go_to_angle": 0x1C,
     "cnc_home": 0x1D,
     "cnc_go_home": 0x1E,
+    "local_origin": 0x1F,
 }
 
 # Immediate control opcodes
@@ -124,6 +126,7 @@ def print_help() -> None:
     print("  cnc_go_to_angle TargetS0_deg=<deg> TargetS1_deg=<deg> AngleTolerance_deg=<deg>")
     print("  cnc_home")
     print("  cnc_go_home")
+    print("  local_origin OriginX_m=<m> OriginY_m=<m>")
     print("  pump_purge pumpSpeed_degps=<signed deg/s> duration_ms=<ms>")
     print("  wait timeout_ms=<int>")
     print("  set_motor_limits motor=<S0|S1|Pump|All> accel=<degps2> speed=<degps>")
@@ -188,6 +191,11 @@ COMMAND_HELP: Dict[str, str] = {
     ),
     "cnc_home": "cnc_home — calibrate S0/S1 from the limit switches, then return to 0/0.",
     "cnc_go_home": "cnc_go_home — move stages to S0=90, S1=180.",
+    "local_origin": (
+        "local_origin keys:\n"
+        "  OriginX_m: float local X offset added to later cartesian commands\n"
+        "  OriginY_m: float local Y offset added to later cartesian commands"
+    ),
     "wait": (
         "wait keys:\n"
         "  timeout_ms: int"
@@ -248,6 +256,8 @@ CMD_ALIASES: Dict[str, str] = {
     "SetPumpConstant": "set_pump_constant",
     "SetAccelScale": "set_accel_scale",
     "PumpPurge": "pump_purge",
+    "LocalOrigin": "local_origin",
+    "SetLocalOrigin": "local_origin",
 }
 
 def _canonical_cmd_name(cmd: str) -> str:
@@ -414,6 +424,13 @@ def _build_cnc_payload(cmd: str, args: Dict[str, Any]) -> Tuple[int, bytes]:
         if args:
             raise ValueError(f"{cmd} does not take arguments")
         return op, b""
+    elif cmd == "local_origin":
+        allowed = {"OriginX_m", "OriginY_m"}
+        unknown = set(args.keys()) - allowed
+        if unknown:
+            raise ValueError(f"Unknown keys for local_origin: {', '.join(sorted(unknown))}")
+        payload = struct.pack("<ff", float(args.get("OriginX_m", 0.0)), float(args.get("OriginY_m", 0.0)))
+        return op, payload
     elif cmd == "pump_purge":
         return op, _build_pump_purge_payload(args)
     else:
@@ -529,23 +546,18 @@ def _write_packet(packet: bytes) -> None:
     resp.raise_for_status()
 
 
-def _send_command(line: str) -> bool:
-    parts = shlex.split(line)
-    if not parts:
-        return False
-    if parts[0] == "run_file":
-        if len(parts) < 2:
-            raise ValueError("usage: run_file <path> [delay_ms]")
-        path = parts[1]
-        delay_ms = 0
-        if len(parts) >= 3:
-            try:
-                delay_ms = int(parts[2])
-            except ValueError:
-                raise ValueError("delay_ms must be integer milliseconds")
-        if delay_ms <= 0:
-            delay_ms = int(os.environ.get('CT_RUNFILE_DELAY_MS', '800'))
-        with open(path, 'r', encoding='utf-8') as f:
+def _run_file(path: str, delay_ms: int, run_file_stack: Optional[List[str]] = None) -> None:
+    stack = run_file_stack if run_file_stack is not None else []
+    base_dir = os.path.dirname(stack[-1]) if stack and not os.path.isabs(path) else ""
+    resolved_path = os.path.join(base_dir, path) if base_dir else path
+    abs_path = os.path.abspath(resolved_path)
+    if abs_path in stack:
+        chain = " -> ".join([*stack, abs_path])
+        raise ValueError(f"Recursive run_file call disallowed: {chain}")
+
+    stack.append(abs_path)
+    try:
+        with open(abs_path, 'r', encoding='utf-8') as f:
             for raw in f:
                 s = raw.strip()
                 if not s or s.startswith('#'):
@@ -564,7 +576,7 @@ def _send_command(line: str) -> bool:
                             break
                         if resp in {'n', 'no'}:
                             print("Aborted by user.")
-                            return True
+                            return
                         print("Please respond with 'y' or 'n'.")
                     continue
                 if cmd2 == 'terminal_wait':
@@ -575,6 +587,10 @@ def _send_command(line: str) -> bool:
                     print(f"{DIM}↳ {s}{RESET}")
                     time.sleep(max(0, dur) / 1000.0)
                     continue
+                if cmd2 == 'run_file':
+                    print(f"{DIM}↳ {s}{RESET}")
+                    _send_command(s, stack)
+                    continue
 
                 pkt = _build_command_packet(s)
 
@@ -583,7 +599,27 @@ def _send_command(line: str) -> bool:
                     print(f"{DIM}↳ {s}{RESET}")
                     _write_packet(pkt)
                     time.sleep(delay_ms / 1000.0)
-                
+    finally:
+        stack.pop()
+
+
+def _send_command(line: str, run_file_stack: Optional[List[str]] = None) -> bool:
+    parts = shlex.split(line)
+    if not parts:
+        return False
+    if parts[0] == "run_file":
+        if len(parts) < 2:
+            raise ValueError("usage: run_file <path> [delay_ms]")
+        path = parts[1]
+        delay_ms = 0
+        if len(parts) >= 3:
+            try:
+                delay_ms = int(parts[2])
+            except ValueError:
+                raise ValueError("delay_ms must be integer milliseconds")
+        if delay_ms <= 0:
+            delay_ms = int(os.environ.get('CT_RUNFILE_DELAY_MS', '800'))
+        _run_file(path, delay_ms, run_file_stack)
         return True
 
     # Command-specific help
@@ -646,6 +682,7 @@ def main() -> None:
             "cnc_go_to_angle",
             "cnc_home",
             "cnc_go_home",
+            "local_origin",
             "pump_purge",
             "ask_to_continue",
             "terminal_wait",
@@ -680,6 +717,7 @@ def main() -> None:
             "cnc_go_to_angle": ["TargetS0_deg", "TargetS1_deg", "AngleTolerance_deg"],
             "cnc_home": [],
             "cnc_go_home": [],
+            "local_origin": ["OriginX_m", "OriginY_m"],
             "pump_purge": ["pumpSpeed_degps", "duration_ms"],
             "terminal_wait": ["duration_ms"],
         }
