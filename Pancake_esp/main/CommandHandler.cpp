@@ -26,6 +26,7 @@ static inline bool is_cnc_opcode(uint8_t op)
         case CNC_GO_TO_ANGLE_OPCODE:
         case CNC_HOME_OPCODE:
         case CNC_GO_HOME_OPCODE:
+        case CNC_SET_LOCAL_ORIGIN_OPCODE:
             return true;
         default:
             return false;
