@@ -71,23 +71,23 @@ struct LocalOriginConfig
     float OriginY_m;
 };
 
-static void ApplyLocalOriginToCartesianConfig(uint8_t opcode, const uint8_t *payload, Vector2D localOrigin_m)
+static void ApplyLocalOriginToCartesianConfig(uint8_t opcode, uint8_t *payload, Vector2D localOrigin_m)
 {
     if (opcode == CNC_JOG_OPCODE)
     {
-        JogConfig *config = reinterpret_cast<JogConfig *>(const_cast<uint8_t *>(payload));
+        JogConfig *config = reinterpret_cast<JogConfig *>(payload);
         config->TargetX_m += localOrigin_m.x;
         config->TargetY_m += localOrigin_m.y;
     }
     else if (opcode == CNC_ARC_OPCODE)
     {
-        ArcConfig *config = reinterpret_cast<ArcConfig *>(const_cast<uint8_t *>(payload));
+        ArcConfig *config = reinterpret_cast<ArcConfig *>(payload);
         config->CenterX_m += localOrigin_m.x;
         config->CenterY_m += localOrigin_m.y;
     }
     else if (opcode == CNC_SPIRAL_OPCODE)
     {
-        SpiralConfig *config = reinterpret_cast<SpiralConfig *>(const_cast<uint8_t *>(payload));
+        SpiralConfig *config = reinterpret_cast<SpiralConfig *>(payload);
         config->CenterX_m += localOrigin_m.x;
         config->CenterY_m += localOrigin_m.y;
     }
@@ -286,7 +286,7 @@ void MotorControlTask(void *Parameters)
             }
             else
             {
-                const uint8_t *payload = decoded.instructions + 2;
+                uint8_t *payload = decoded.instructions + 2;
                 ESP_LOGI(TAG, "Configuring OpCode: 0x%02X", decoded.opcode);
 
                 if (decoded.opcode == CNC_HOME_OPCODE)

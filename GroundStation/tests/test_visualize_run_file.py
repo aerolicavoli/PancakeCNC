@@ -8,6 +8,7 @@ from GroundStation.VisualizeRunFile import (
     DRAW_LINE_WIDTH,
     GO_HOME_S0_DEG,
     GO_HOME_S1_DEG,
+    IntentError,
     ParsedCommand,
     TRAVEL_LINE_WIDTH,
     Vec2,
@@ -18,6 +19,7 @@ from GroundStation.VisualizeRunFile import (
     plot_simulation,
     save_animation_gif,
     simulate_commands,
+    simulate_file,
 )
 
 
@@ -63,6 +65,44 @@ class VisualizeRunFileTests(unittest.TestCase):
         self.assertGreaterEqual(len(commands), 8)
         self.assertIn("cnc_spiral", [command.cmd for command in commands])
         self.assertEqual(motion_commands[0], "cnc_jog")
+
+    def test_parse_program_expands_nested_run_file_and_local_origin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            child = root / "child.txt"
+            parent = root / "parent.txt"
+            child.write_text(
+                "cnc_jog TargetX_m=0.01 TargetY_m=0.02 LinearSpeed_mps=0.03 PumpOn=0\n",
+                encoding="utf-8",
+            )
+            parent.write_text(
+                "local_origin OriginX_m=0.10 OriginY_m=0.20\n"
+                "run_file child.txt\n",
+                encoding="utf-8",
+            )
+
+            commands = parse_program(parent)
+
+        self.assertEqual([command.cmd for command in commands], ["local_origin", "cnc_jog"])
+        self.assertAlmostEqual(commands[1].args["TargetX_m"], 0.11)
+        self.assertAlmostEqual(commands[1].args["TargetY_m"], 0.22)
+
+    def test_parse_program_disallows_recursive_run_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recursive = Path(tmp) / "recursive.txt"
+            recursive.write_text("run_file recursive.txt\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(IntentError, "recursive run_file include disallowed"):
+                parse_program(recursive)
+
+    def test_simulate_multi_smile_run_file(self):
+        result = simulate_file(Path("GroundStation/GCode/multi_smile.txt"), dt_ms=100)
+
+        draw_segments = [segment for segment in result.segments if segment.pump_on]
+
+        self.assertGreaterEqual(len(draw_segments), 4)
+        self.assertTrue(math.isfinite(result.final_position_m.x))
+        self.assertTrue(math.isfinite(result.final_position_m.y))
 
     def test_simulation_classifies_pump_on_and_off_segments(self):
         commands = [

@@ -548,14 +548,16 @@ def _write_packet(packet: bytes) -> None:
 
 def _run_file(path: str, delay_ms: int, run_file_stack: Optional[List[str]] = None) -> None:
     stack = run_file_stack if run_file_stack is not None else []
-    abs_path = os.path.abspath(path)
+    base_dir = os.path.dirname(stack[-1]) if stack and not os.path.isabs(path) else ""
+    resolved_path = os.path.join(base_dir, path) if base_dir else path
+    abs_path = os.path.abspath(resolved_path)
     if abs_path in stack:
         chain = " -> ".join([*stack, abs_path])
         raise ValueError(f"Recursive run_file call disallowed: {chain}")
 
     stack.append(abs_path)
     try:
-        with open(path, 'r', encoding='utf-8') as f:
+        with open(abs_path, 'r', encoding='utf-8') as f:
             for raw in f:
                 s = raw.strip()
                 if not s or s.startswith('#'):
