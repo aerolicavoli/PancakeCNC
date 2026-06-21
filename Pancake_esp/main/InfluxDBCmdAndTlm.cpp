@@ -3,6 +3,7 @@
 #include "CommandHandler.h"
 #include "DataModel.h"
 #include "GPIOAssignments.h"
+#include "PanMath.h"
 #include <cstring>
 #include <algorithm>
 
@@ -29,6 +30,83 @@ static void InitializeUART2()
     ESP_ERROR_CHECK(uart_set_pin(UART_NUM, UART_TX_PIN, UART_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM, 1024, 1024, 0, NULL, 0));
     ESP_LOGI(TAG, "UART2 initialized on TX=%d, RX=%d at 115200 baud", UART_TX_PIN, UART_RX_PIN);
+}
+
+namespace
+{
+static constexpr int64_t TELEMETRY_PERIOD_1HZ_MS = 1000;
+static constexpr int64_t TELEMETRY_PERIOD_0_25HZ_MS = 4000;
+static constexpr int64_t TELEMETRY_PERIOD_0_05HZ_MS = 20000;
+static constexpr size_t MAX_REGISTERED_TELEMETRY_POINTS = 32;
+
+enum class TelemetryValueType
+{
+    Float,
+    Bool,
+};
+
+typedef struct
+{
+    const char *measurement;
+    const void *value;
+    TelemetryValueType valueType;
+    int64_t period_ms;
+    int64_t lastPublished_ms;
+} registered_telemetry_point_t;
+
+static void RegisterTelemetryPoint(registered_telemetry_point_t *registry,
+                                   size_t registryCapacity,
+                                   size_t &registryCount,
+                                   const char *measurement,
+                                   const float *value,
+                                   int64_t period_ms)
+{
+    if (registryCount >= registryCapacity)
+    {
+        ESP_LOGE(TAG, "Telemetry registry full; dropping %s", measurement);
+        return;
+    }
+
+    registry[registryCount++] = {
+        .measurement = measurement,
+        .value = value,
+        .valueType = TelemetryValueType::Float,
+        .period_ms = period_ms,
+        .lastPublished_ms = 0,
+    };
+}
+
+static void RegisterTelemetryPoint(registered_telemetry_point_t *registry,
+                                   size_t registryCapacity,
+                                   size_t &registryCount,
+                                   const char *measurement,
+                                   const bool *value,
+                                   int64_t period_ms)
+{
+    if (registryCount >= registryCapacity)
+    {
+        ESP_LOGE(TAG, "Telemetry registry full; dropping %s", measurement);
+        return;
+    }
+
+    registry[registryCount++] = {
+        .measurement = measurement,
+        .value = value,
+        .valueType = TelemetryValueType::Bool,
+        .period_ms = period_ms,
+        .lastPublished_ms = 0,
+    };
+}
+
+static float ReadTelemetryValue(const registered_telemetry_point_t &point)
+{
+    if (point.valueType == TelemetryValueType::Bool)
+    {
+        return *(static_cast<const bool *>(point.value)) ? 1.0f : 0.0f;
+    }
+
+    return *(static_cast<const float *>(point.value));
+}
 }
 
 SemaphoreHandle_t TlmBufferMutex = nullptr;
@@ -478,70 +556,123 @@ void AggregateTlmTask(void *Parameters)
     struct timeval tv;
     bool sendBufferOverflowWarning = true;
 
+    Vector2D boundaryCorners_m[4];
+    if (GetReachableRectangleCorners(boundaryCorners_m))
+    {
+        TelemetryData.cartesianBoundaryCorner0_X_m = boundaryCorners_m[0].x;
+        TelemetryData.cartesianBoundaryCorner0_Y_m = boundaryCorners_m[0].y;
+        TelemetryData.cartesianBoundaryCorner1_X_m = boundaryCorners_m[1].x;
+        TelemetryData.cartesianBoundaryCorner1_Y_m = boundaryCorners_m[1].y;
+        TelemetryData.cartesianBoundaryCorner2_X_m = boundaryCorners_m[2].x;
+        TelemetryData.cartesianBoundaryCorner2_Y_m = boundaryCorners_m[2].y;
+        TelemetryData.cartesianBoundaryCorner3_X_m = boundaryCorners_m[3].x;
+        TelemetryData.cartesianBoundaryCorner3_Y_m = boundaryCorners_m[3].y;
+    }
+    else
+    {
+        ESP_LOGE(TAG, "Reachable Cartesian boundary corners unavailable for telemetry");
+    }
+
+    registered_telemetry_point_t telemetryRegistry[MAX_REGISTERED_TELEMETRY_POINTS];
+    size_t telemetryRegistryCount = 0;
+
+    // Register telemetry point cadences in one place rather than hard-coding named buckets.
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "tipPos_X_m", &TelemetryData.tipPos_X_m, TELEMETRY_PERIOD_1HZ_MS);
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "tipPos_Y_m", &TelemetryData.tipPos_Y_m, TELEMETRY_PERIOD_1HZ_MS);
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "targetPos_X_m", &TelemetryData.targetPos_X_m, TELEMETRY_PERIOD_1HZ_MS);
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "targetPos_Y_m", &TelemetryData.targetPos_Y_m, TELEMETRY_PERIOD_1HZ_MS);
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "S0_Speed_degps", &TelemetryData.S0MotorTlm.Speed_degps, TELEMETRY_PERIOD_1HZ_MS);
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "S0_TargetSpeed_degps", &TelemetryData.S0MotorTlm.TargetSpeed_degps, TELEMETRY_PERIOD_1HZ_MS);
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "S1_Speed_degps", &TelemetryData.S1MotorTlm.Speed_degps, TELEMETRY_PERIOD_1HZ_MS);
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "S1_TargetSpeed_degps", &TelemetryData.S1MotorTlm.TargetSpeed_degps, TELEMETRY_PERIOD_1HZ_MS);
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "Pump_Speed_degps", &TelemetryData.PumpMotorTlm.Speed_degps, TELEMETRY_PERIOD_1HZ_MS);
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "Pump_TargetSpeed_degps", &TelemetryData.PumpMotorTlm.TargetSpeed_degps, TELEMETRY_PERIOD_1HZ_MS);
+
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "targetPos_S0_deg", &TelemetryData.targetPos_S0_deg, TELEMETRY_PERIOD_0_25HZ_MS);
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "targetPos_S1_deg", &TelemetryData.targetPos_S1_deg, TELEMETRY_PERIOD_0_25HZ_MS);
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "plannedTarget_S0_deg", &TelemetryData.plannedTarget_S0_deg, TELEMETRY_PERIOD_0_25HZ_MS);
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "plannedTarget_S1_deg", &TelemetryData.plannedTarget_S1_deg, TELEMETRY_PERIOD_0_25HZ_MS);
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "plannedDelta_S0_deg", &TelemetryData.plannedDelta_S0_deg, TELEMETRY_PERIOD_0_25HZ_MS);
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "plannedDelta_S1_deg", &TelemetryData.plannedDelta_S1_deg, TELEMETRY_PERIOD_0_25HZ_MS);
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "S0_Pos_deg", &TelemetryData.S0MotorTlm.Position_deg, TELEMETRY_PERIOD_0_25HZ_MS);
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "S1_Pos_deg", &TelemetryData.S1MotorTlm.Position_deg, TELEMETRY_PERIOD_0_25HZ_MS);
+
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "espTemp_C", &TelemetryData.espTemp_C, TELEMETRY_PERIOD_0_05HZ_MS);
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "limitBlocked_S0", &TelemetryData.limitBlocked_S0, TELEMETRY_PERIOD_0_05HZ_MS);
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "limitBlocked_S1", &TelemetryData.limitBlocked_S1, TELEMETRY_PERIOD_0_05HZ_MS);
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "S0_LimitSwitch", &TelemetryData.S0LimitSwitch, TELEMETRY_PERIOD_0_05HZ_MS);
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "S1_LimitSwitch", &TelemetryData.S1LimitSwitch, TELEMETRY_PERIOD_0_05HZ_MS);
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "cartesianBoundaryCorner0_X_m", &TelemetryData.cartesianBoundaryCorner0_X_m, TELEMETRY_PERIOD_0_05HZ_MS);
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "cartesianBoundaryCorner0_Y_m", &TelemetryData.cartesianBoundaryCorner0_Y_m, TELEMETRY_PERIOD_0_05HZ_MS);
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "cartesianBoundaryCorner1_X_m", &TelemetryData.cartesianBoundaryCorner1_X_m, TELEMETRY_PERIOD_0_05HZ_MS);
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "cartesianBoundaryCorner1_Y_m", &TelemetryData.cartesianBoundaryCorner1_Y_m, TELEMETRY_PERIOD_0_05HZ_MS);
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "cartesianBoundaryCorner2_X_m", &TelemetryData.cartesianBoundaryCorner2_X_m, TELEMETRY_PERIOD_0_05HZ_MS);
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "cartesianBoundaryCorner2_Y_m", &TelemetryData.cartesianBoundaryCorner2_Y_m, TELEMETRY_PERIOD_0_05HZ_MS);
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "cartesianBoundaryCorner3_X_m", &TelemetryData.cartesianBoundaryCorner3_X_m, TELEMETRY_PERIOD_0_05HZ_MS);
+    RegisterTelemetryPoint(telemetryRegistry, MAX_REGISTERED_TELEMETRY_POINTS, telemetryRegistryCount,
+                           "cartesianBoundaryCorner3_Y_m", &TelemetryData.cartesianBoundaryCorner3_Y_m, TELEMETRY_PERIOD_0_05HZ_MS);
+
     for (;;)
     {
         gettimeofday(&tv, NULL);
         timeStamp = (int64_t)tv.tv_sec * 1000.0 + (int64_t)tv.tv_usec / 1000L;
 
-        // Acquire the mutex before updating shared data
-        if (true)
+        // Drain a limited number of captured log lines to avoid WDT starvation
+        const int LOG_DRAIN_MAX = 32;
+        int drained = 0;
+        char msg[LOG_MSG_MAX_LEN];
+        while (drained < LOG_DRAIN_MAX && log_ring_pop(&TlmLogRing, msg, sizeof(msg)))
         {
-            // Drain a limited number of captured log lines to avoid WDT starvation
-            const int LOG_DRAIN_MAX = 32;
-            int drained = 0;
-            char msg[LOG_MSG_MAX_LEN];
-            while (drained < LOG_DRAIN_MAX && log_ring_pop(&TlmLogRing, msg, sizeof(msg)))
-            {
-                AddLogToBuffer(msg);
-                ++drained;
-            }
-
-            if (sendBufferOverflowWarning && WorkingTlmBufferIdx > WARN_BUFFER_SIZE)
-            {
-                ESP_LOGW(TAG, "Buffer overflow warning: %d bytes used", WorkingTlmBufferIdx);
-                sendBufferOverflowWarning = false;
-            }
-
-            // Add telemetry data to buffer
-            AddDataToBuffer("espTemp_C", "data", TelemetryData.espTemp_C, timeStamp);
-
-            AddDataToBuffer("tipPos_X_m", "data", TelemetryData.tipPos_X_m, timeStamp);
-            AddDataToBuffer("tipPos_Y_m", "data", TelemetryData.tipPos_Y_m, timeStamp);
-
-            AddDataToBuffer("targetPos_X_m", "data", TelemetryData.targetPos_X_m, timeStamp);
-            AddDataToBuffer("targetPos_Y_m", "data", TelemetryData.targetPos_Y_m, timeStamp);
-
-            AddDataToBuffer("targetPos_S0_deg", "data", TelemetryData.targetPos_S0_deg, timeStamp);
-            AddDataToBuffer("targetPos_S1_deg", "data", TelemetryData.targetPos_S1_deg, timeStamp);
-            AddDataToBuffer("plannedTarget_S0_deg", "data", TelemetryData.plannedTarget_S0_deg, timeStamp);
-            AddDataToBuffer("plannedTarget_S1_deg", "data", TelemetryData.plannedTarget_S1_deg, timeStamp);
-            AddDataToBuffer("plannedDelta_S0_deg", "data", TelemetryData.plannedDelta_S0_deg, timeStamp);
-            AddDataToBuffer("plannedDelta_S1_deg", "data", TelemetryData.plannedDelta_S1_deg, timeStamp);
-            AddDataToBuffer("limitBlocked_S0", "data", TelemetryData.limitBlocked_S0, timeStamp);
-            AddDataToBuffer("limitBlocked_S1", "data", TelemetryData.limitBlocked_S1, timeStamp);
-
-            AddDataToBuffer("S0_LimitSwitch", "data", TelemetryData.S0LimitSwitch, timeStamp);
-            AddDataToBuffer("S0_Pos_deg", "data", TelemetryData.S0MotorTlm.Position_deg, timeStamp);
-            AddDataToBuffer("S0_Speed_degps", "data", TelemetryData.S0MotorTlm.Speed_degps,
-                            timeStamp);
-            AddDataToBuffer("S0_TargetSpeed_degps", "data", TelemetryData.S0MotorTlm.TargetSpeed_degps,
-                            timeStamp);
-
-            AddDataToBuffer("S1_LimitSwitch", "data", TelemetryData.S1LimitSwitch, timeStamp);
-            AddDataToBuffer("S1_Pos_deg", "data", TelemetryData.S1MotorTlm.Position_deg, timeStamp);
-            AddDataToBuffer("S1_Speed_degps", "data", TelemetryData.S1MotorTlm.Speed_degps,
-                            timeStamp);
-            AddDataToBuffer("S1_TargetSpeed_degps", "data", TelemetryData.S1MotorTlm.TargetSpeed_degps,
-                            timeStamp);
-
-            // AddDataToBuffer("Pump_Pos_deg", "data", TelemetryData.PumpMotorTlm.Position_deg,
-            // timeStamp);
-            AddDataToBuffer("Pump_Speed_degps", "data", TelemetryData.PumpMotorTlm.Speed_degps,
-                            timeStamp);
-            AddDataToBuffer("Pump_TargetSpeed_degps", "data",
-                            TelemetryData.PumpMotorTlm.TargetSpeed_degps, timeStamp);
+            AddLogToBuffer(msg);
+            ++drained;
         }
-        
+
+        if (sendBufferOverflowWarning && WorkingTlmBufferIdx > WARN_BUFFER_SIZE)
+        {
+            ESP_LOGW(TAG, "Buffer overflow warning: %d bytes used", WorkingTlmBufferIdx);
+            sendBufferOverflowWarning = false;
+        }
+
+        for (size_t i = 0; i < telemetryRegistryCount; ++i)
+        {
+            registered_telemetry_point_t &point = telemetryRegistry[i];
+            if (point.lastPublished_ms == 0 || timeStamp - point.lastPublished_ms >= point.period_ms)
+            {
+                AddDataToBuffer(point.measurement, "data", ReadTelemetryValue(point), timeStamp);
+                point.lastPublished_ms = timeStamp;
+            }
+        }
+
         vTaskDelay(bufferAddPeriod_Ticks);
 
     }
