@@ -33,6 +33,14 @@ typedef struct {
     float plannedDelta_S1_deg;
     bool limitBlocked_S0;
     bool limitBlocked_S1;
+    float cartesianBoundaryCorner0_X_m;
+    float cartesianBoundaryCorner0_Y_m;
+    float cartesianBoundaryCorner1_X_m;
+    float cartesianBoundaryCorner1_Y_m;
+    float cartesianBoundaryCorner2_X_m;
+    float cartesianBoundaryCorner2_Y_m;
+    float cartesianBoundaryCorner3_X_m;
+    float cartesianBoundaryCorner3_Y_m;
 } telemetry_data_t;
 
 extern telemetry_data_t TelemetryData;
