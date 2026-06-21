@@ -77,6 +77,18 @@ void TestReachabilityErrors()
               E_UNREACHABLE_TOO_CLOSE);
 }
 
+void TestNonFiniteTargetIsRejected()
+{
+    float stage0_angle_deg = 123.0f;
+    float stage1_angle_deg = 456.0f;
+
+    EXPECT_EQ(CartToAng(stage0_angle_deg, stage1_angle_deg,
+                        Vector2D(NAN, GetMinReach_m())),
+              E_UNREACHABLE_TOO_FAR);
+    ExpectNearlyEqual(stage0_angle_deg, 123.0f, 0.0f, "non-finite target preserves s0");
+    ExpectNearlyEqual(stage1_angle_deg, 456.0f, 0.0f, "non-finite target preserves s1");
+}
+
 void TestReachableRectangleCorners()
 {
     Vector2D corners_m[4];
@@ -135,6 +147,7 @@ int main()
     TestVelocityKinematicsMatchFiniteDifference();
     TestInverseKinematicsRoundTrips();
     TestReachabilityErrors();
+    TestNonFiniteTargetIsRejected();
     TestReachableRectangleCorners();
     TestReachabilityBoundaryEdges();
 

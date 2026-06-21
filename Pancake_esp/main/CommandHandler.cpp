@@ -1,5 +1,6 @@
 #include "CommandHandler.h"
 #include "CNCOpCodes.h"
+#include "CrashDebug.h"
 
 static const char *TAG = "CommandHandler";
 
@@ -23,6 +24,8 @@ static inline bool is_cnc_opcode(uint8_t op)
         case CNC_CONFIG_ACCEL_SCALE_OPCODE:
         case CNC_RECTANGLE_OPCODE:
         case CNC_GO_TO_ANGLE_OPCODE:
+        case CNC_HOME_OPCODE:
+        case CNC_GO_HOME_OPCODE:
             return true;
         default:
             return false;
@@ -31,11 +34,11 @@ static inline bool is_cnc_opcode(uint8_t op)
 
 void CommandHandlerInit(void)
 {
-    cmd_queue_fast_decode = xQueueCreate(5, sizeof(raw_cmd_payload_t));
+    cmd_queue_fast_decode = xQueueCreate(32, sizeof(raw_cmd_payload_t));
     assert(cmd_queue_fast_decode != NULL);
-    cmd_queue_cnc = xQueueCreate(8, sizeof(decoded_cmd_payload_t));
+    cmd_queue_cnc = xQueueCreate(32, sizeof(decoded_cmd_payload_t));
     assert(cmd_queue_cnc != NULL);
-    cmd_queue_now = xQueueCreate(4, sizeof(uint8_t));
+    cmd_queue_now = xQueueCreate(8, sizeof(uint8_t));
     assert(cmd_queue_now != NULL);
 }
 
@@ -89,6 +92,16 @@ static void handle_command(const decoded_cmd_payload_t &cmd)
             (void)xQueueSend(cmd_queue_now, &code, 0);
             break;
         }
+        case 0x04: // Crash diagnostic
+        {
+            if (cmd.instruction_length != 0)
+            {
+                ESP_LOGW(TAG, "Crash diagnostic ignores %u payload bytes", cmd.instruction_length);
+            }
+            ESP_LOGW(TAG, "Crash Diagnostic Command Received");
+            CrashDebugPrintDiagnostic();
+            break;
+        }
         default:
             ESP_LOGW(TAG, "Unknown opcode 0x%02X", cmd.opcode);
             break;
@@ -103,7 +116,7 @@ void CommandHandlerTask(void *param)
         if (xQueueReceive(cmd_queue_fast_decode, &item, portMAX_DELAY) == pdTRUE)
         {
             decoded_cmd_payload_t decoded{};
-            decoded.timestamp = item.timestamp;
+            decoded.timestamp_ms = item.timestamp_ms;
 
             // Base64 decode (into instructions buffer)
             size_t out_len = 0;

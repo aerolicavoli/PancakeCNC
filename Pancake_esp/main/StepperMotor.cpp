@@ -85,7 +85,11 @@ void StepperMotor::setDirection(bool dir)
 // Set target speed
 void StepperMotor::setTargetSpeed(float Speed_degps)
 {
-    if (Speed_degps > m_SpeedLimit_degps)
+    if (!std::isfinite(Speed_degps))
+    {
+        m_TargetSpeed_degps = 0.0f;
+    }
+    else if (Speed_degps > m_SpeedLimit_degps)
     {
         m_TargetSpeed_degps = m_SpeedLimit_degps;
     }
@@ -132,18 +136,25 @@ bool IRAM_ATTR StepperMotor::onStepTimerCallback(gptimer_handle_t timer,
 
 void StepperMotor::Zero(void)
 {
-    motor_tlm_t tempTlm;
-    GetTlm(&tempTlm);
-    m_AngleOffset_deg -= tempTlm.Position_deg;
+    SetPosition(0.0f);
+}
+
+void StepperMotor::SetPosition(float Position_deg)
+{
+    portENTER_CRITICAL(&m_CriticalMemoryMux);
+    int32_t steps = m_stepCount;
+    m_AngleOffset_deg = Position_deg - (steps * m_StepSize_deg);
+    portEXIT_CRITICAL(&m_CriticalMemoryMux);
 }
 
 void StepperMotor::GetTlm(motor_tlm_t *Tlm)
 {
     portENTER_CRITICAL(&m_CriticalMemoryMux);
     int32_t steps = m_stepCount;
+    float angleOffset_deg = m_AngleOffset_deg;
     portEXIT_CRITICAL(&m_CriticalMemoryMux);
 
-    Tlm->Position_deg = steps * m_StepSize_deg + m_AngleOffset_deg;
+    Tlm->Position_deg = steps * m_StepSize_deg + angleOffset_deg;
     Tlm->Speed_degps = m_CurrentSpeed_degps;
     Tlm->TargetSpeed_degps = m_TargetSpeed_degps;
 }
@@ -163,6 +174,14 @@ float StepperMotor::GetSpeedLimit() const { return m_SpeedLimit_degps; }
 // Update the motor pulse freq
 void StepperMotor::UpdateSpeed(bool ForceUpdate)
 {
+    if (!std::isfinite(m_TargetSpeed_degps))
+    {
+        m_TargetSpeed_degps = 0.0f;
+    }
+    if (!std::isfinite(m_CurrentSpeed_degps))
+    {
+        m_CurrentSpeed_degps = 0.0f;
+    }
 
     if (ForceUpdate)
     {
@@ -202,6 +221,20 @@ void StepperMotor::UpdateSpeed(bool ForceUpdate)
     EnforceDirectionalInhibit();
 
     // Update timer alarm value
+    if (!std::isfinite(m_CurrentSpeed_degps))
+    {
+        m_CurrentSpeed_degps = 0.0f;
+    }
+
+    if (m_CurrentSpeed_degps != 0.0)
+    {
+        float absSpeed_hz = fabs(m_CurrentSpeed_degps) / m_StepSize_deg;
+        if (!std::isfinite(absSpeed_hz) || absSpeed_hz <= 0.0f)
+        {
+            m_CurrentSpeed_degps = 0.0f;
+        }
+    }
+
     if (m_CurrentSpeed_degps != 0.0)
     {
         float absSpeed_hz = fabs(m_CurrentSpeed_degps) / m_StepSize_deg;
@@ -212,18 +245,49 @@ void StepperMotor::UpdateSpeed(bool ForceUpdate)
         gptimer_alarm_config_t alarm_config = {};
         alarm_config.alarm_count = alarm_count;
         alarm_config.flags.auto_reload_on_alarm = true;
-        CUSTOM_ERROR_CHECK(gptimer_set_alarm_action(m_PulseTimer, &alarm_config));
-
-        if (!m_TimerRunning)
+        esp_err_t err = gptimer_set_alarm_action(m_PulseTimer, &alarm_config);
+        if (err != ESP_OK)
         {
-            CUSTOM_ERROR_CHECK(gptimer_start(m_PulseTimer));
-            m_TimerRunning = true;
+            ESP_LOGE(name, "Failed to set step timer alarm: %s", esp_err_to_name(err));
+            m_CurrentSpeed_degps = 0.0f;
         }
     }
-    else if (m_TimerRunning)
+
+    if (m_CurrentSpeed_degps != 0.0 && !m_TimerRunning)
     {
-        CUSTOM_ERROR_CHECK(gptimer_stop(m_PulseTimer));
-        m_TimerRunning = false;
+        esp_err_t err = gptimer_start(m_PulseTimer);
+        if (err == ESP_OK)
+        {
+            m_TimerRunning = true;
+        }
+        else if (err == ESP_ERR_INVALID_STATE)
+        {
+            m_TimerRunning = true;
+            ESP_LOGW(name, "Step timer already running while state was stopped");
+        }
+        else
+        {
+            ESP_LOGE(name, "Failed to start step timer: %s", esp_err_to_name(err));
+            m_CurrentSpeed_degps = 0.0f;
+        }
+    }
+
+    if (m_CurrentSpeed_degps == 0.0 && m_TimerRunning)
+    {
+        esp_err_t err = gptimer_stop(m_PulseTimer);
+        if (err == ESP_OK)
+        {
+            m_TimerRunning = false;
+        }
+        else if (err == ESP_ERR_INVALID_STATE)
+        {
+            m_TimerRunning = false;
+            ESP_LOGW(name, "Step timer already stopped while state was running");
+        }
+        else
+        {
+            ESP_LOGE(name, "Failed to stop step timer: %s", esp_err_to_name(err));
+        }
     }
 
     setDirection(m_CurrentSpeed_degps >= 0);

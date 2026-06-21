@@ -36,20 +36,34 @@ static time_t utc_mktime(const struct tm &tm) {
 
 // Helper to parse ISO8601 timestamps of the form
 // "YYYY-MM-DDTHH:MM:SS.mmmZ" or without fractional seconds.
-static bool parse_iso8601(const std::string &token, time_t &out) {
+static bool parse_iso8601_ms(const std::string &token, int64_t &out_ms) {
     std::string ts = token;
     if (!ts.empty() && ts.back() == 'Z') {
         ts.pop_back();
     }
+    int64_t millis = 0;
     size_t dot = ts.find('.');
     if (dot != std::string::npos) {
+        std::string fraction = ts.substr(dot + 1);
         ts = ts.substr(0, dot);
+        int digits = 0;
+        for (char ch : fraction) {
+            if (!std::isdigit(static_cast<unsigned char>(ch)) || digits >= 3) {
+                break;
+            }
+            millis = millis * 10 + (ch - '0');
+            digits++;
+        }
+        while (digits > 0 && digits < 3) {
+            millis *= 10;
+            digits++;
+        }
     }
     struct tm tm = {};
     if (!strptime(ts.c_str(), "%Y-%m-%dT%H:%M:%S", &tm)) {
         return false;
     }
-    out = utc_mktime(tm);
+    out_ms = static_cast<int64_t>(utc_mktime(tm)) * 1000 + millis;
     return true;
 }
 
@@ -93,12 +107,12 @@ bool parse_influxdb_command(const std::string &body, InfluxDBCommand &cmd) {
         return false;
     }
 
-    time_t timestamp;
-    if (!parse_iso8601(tokens[5], timestamp)) {
+    int64_t timestamp_ms;
+    if (!parse_iso8601_ms(tokens[5], timestamp_ms)) {
         return false;
     }
 
-    cmd.timestamp = timestamp;
+    cmd.timestamp_ms = timestamp_ms;
     cmd.payload = tokens[6];
     return true;
 }
@@ -126,11 +140,11 @@ size_t parse_influxdb_command_list(const std::string &body, std::vector<InfluxDB
         }
         if (tokens.size() < 7) continue;
 
-        time_t timestamp;
-        if (!parse_iso8601(tokens[5], timestamp)) continue;
+        int64_t timestamp_ms;
+        if (!parse_iso8601_ms(tokens[5], timestamp_ms)) continue;
 
         InfluxDBCommand cmd;
-        cmd.timestamp = timestamp;
+        cmd.timestamp_ms = timestamp_ms;
         cmd.payload = tokens[6];
         out.push_back(std::move(cmd));
         ++count;

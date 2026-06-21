@@ -3,5 +3,6 @@
 
 void CrashDebugPrintResetReason(void);
 void CrashDebugRecordBoot(void);
+void CrashDebugPrintDiagnostic(void);
 
 #endif // CRASHDEBUG_H

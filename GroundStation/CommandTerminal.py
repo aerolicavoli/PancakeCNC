@@ -9,6 +9,8 @@ Simplified syntax (no leading / or -a):
   cnc_constant_speed S0Speed_degps=0 S1Speed_degps=45
   cnc_rectangle InsetDistance_m=0.01 LinearSpeed_mps=0.05
   cnc_go_to_angle TargetS0_deg=0 TargetS1_deg=0 AngleTolerance_deg=0.25
+  cnc_home
+  cnc_go_home
 
 Run a newline-delimited program file:
   run_file TestProgram.txt
@@ -44,6 +46,9 @@ INFLUXDB_URL = os.environ.get("INFLUXDB_URL")
 INFLUXDB_TOKEN = os.environ.get("INFLUXDB_TOKEN")
 INFLUXDB_ORG = os.environ.get("INFLUXDB_ORG")
 INFLUXDB_CMD_BUCKET = os.environ.get("INFLUXDB_CMD_BUCKET")
+_last_write_timestamp_ms = 0
+
+RUN_FILE_COMPLETION_ROOTS = [".", "GroundStation/GCode"]
 
 
 OPCODES: Dict[str, Tuple[str, int]] = {  # echo mapping
@@ -64,6 +69,8 @@ CNC_OPCODES: Dict[str, int] = {
     "set_accel_scale": 0x1A,
     "cnc_rectangle": 0x1B,
     "cnc_go_to_angle": 0x1C,
+    "cnc_home": 0x1D,
+    "cnc_go_home": 0x1E,
 }
 
 # Immediate control opcodes
@@ -71,6 +78,7 @@ IMMEDIATE_OPCODES: Dict[str, int] = {
     "pause": 0x01,
     "resume": 0x02,
     "stop": 0x03,
+    "crash_diagnostic": 0x04,
 }
 
 # Defaults for command arguments
@@ -114,12 +122,15 @@ def print_help() -> None:
     print("  cnc_arc StartTheta_rad=<rad> EndTheta_rad=<rad> Radius_m=<m> LinearSpeed_mps=<m/s> CenterX_m=<m> CenterY_m=<m>")
     print("  cnc_rectangle InsetDistance_m=<m> LinearSpeed_mps=<m/s>")
     print("  cnc_go_to_angle TargetS0_deg=<deg> TargetS1_deg=<deg> AngleTolerance_deg=<deg>")
+    print("  cnc_home")
+    print("  cnc_go_home")
     print("  pump_purge pumpSpeed_degps=<signed deg/s> duration_ms=<ms>")
     print("  wait timeout_ms=<int>")
     print("  set_motor_limits motor=<S0|S1|Pump|All> accel=<degps2> speed=<degps>")
     print("  set_pump_constant pumpConstant_degpm=<val>")
     print("  set_accel_scale accelScale=<ratio>")
     print("  pause | resume | stop")
+    print("  crash_diagnostic")
     print("  ask_to_continue [message]")
     print("  terminal_wait duration_ms=<int>")
     print("  run_file <path> [delay_ms]")
@@ -175,6 +186,8 @@ COMMAND_HELP: Dict[str, str] = {
         "  TargetS1_deg:       float absolute stage-1 angle target\n"
         "  AngleTolerance_deg: float completion tolerance (default 0.25)"
     ),
+    "cnc_home": "cnc_home — calibrate S0/S1 from the limit switches, then return to 0/0.",
+    "cnc_go_home": "cnc_go_home — move stages to S0=90, S1=180.",
     "wait": (
         "wait keys:\n"
         "  timeout_ms: int"
@@ -201,6 +214,9 @@ COMMAND_HELP: Dict[str, str] = {
     "pause": "pause — immediately zero speeds and hold state.",
     "resume": "resume — clear pause and continue.",
     "stop": "stop — idle and clear queued CNC commands.",
+    "crash_diagnostic": (
+        "crash_diagnostic — print reset/coredump facts to EVR logs, then erase the saved coredump."
+    ),
     "ask_to_continue": (
         "ask_to_continue [message]\n"
         "  Prompts the user to continue (y/n). Not sent to device."
@@ -218,6 +234,7 @@ CMD_ALIASES: Dict[str, str] = {
     "Pause": "pause",
     "Resume": "resume",
     "Stop": "stop",
+    "CrashDiagnostic": "crash_diagnostic",
     "CNC_Spiral": "cnc_spiral",
     "CNC_Sine": "cnc_sine",
     "CNC_ConstantSpeed": "cnc_constant_speed",
@@ -225,6 +242,8 @@ CMD_ALIASES: Dict[str, str] = {
     "CNC_Arc": "cnc_arc",
     "CNC_Rectangle": "cnc_rectangle",
     "CNC_GoToAngle": "cnc_go_to_angle",
+    "CNC_Home": "cnc_home",
+    "CNC_GoHome": "cnc_go_home",
     "SetMotorLimits": "set_motor_limits",
     "SetPumpConstant": "set_pump_constant",
     "SetAccelScale": "set_accel_scale",
@@ -391,6 +410,10 @@ def _build_cnc_payload(cmd: str, args: Dict[str, Any]) -> Tuple[int, bytes]:
         tol = float(merged.get("AngleTolerance_deg"))
         payload = struct.pack("<fff", s0, s1, tol)
         return op, payload
+    elif cmd in {"cnc_home", "cnc_go_home"}:
+        if args:
+            raise ValueError(f"{cmd} does not take arguments")
+        return op, b""
     elif cmd == "pump_purge":
         return op, _build_pump_purge_payload(args)
     else:
@@ -451,8 +474,40 @@ def _build_command_packet(line: str) -> Optional[bytes]:
     return bytes([opcode, len(payload)]) + payload
 
 
+def _run_file_path_candidates(text: str) -> List[str]:
+    """Return path completions for run_file.
+
+    Directories are included with a trailing slash so readline can keep drilling
+    down; files are limited to .txt program files.
+    """
+    if not text:
+        roots = RUN_FILE_COMPLETION_ROOTS
+    elif os.path.dirname(text):
+        roots = [""]
+    else:
+        roots = ["", "GroundStation/GCode"]
+
+    candidates = set()
+    for root in roots:
+        pattern = os.path.join(root, text + "*") if root else text + "*"
+        try:
+            matches = glob.glob(pattern)
+        except Exception:
+            continue
+
+        for match in matches:
+            display = match[2:] if match.startswith("." + os.sep) else match
+            if os.path.isdir(match):
+                candidates.add(display.rstrip(os.sep) + os.sep)
+            elif match.endswith(".txt"):
+                candidates.add(display)
+
+    return sorted(candidates)
+
+
 def _write_packet(packet: bytes) -> None:
     import requests
+    global _last_write_timestamp_ms
 
     url = f"{INFLUXDB_URL}/api/v2/write"
     params = {
@@ -466,6 +521,9 @@ def _write_packet(packet: bytes) -> None:
     }
     b64 = base64.b64encode(packet).decode("ascii")
     timestamp = int(time.time() * 1000)
+    if timestamp <= _last_write_timestamp_ms:
+        timestamp = _last_write_timestamp_ms + 1
+    _last_write_timestamp_ms = timestamp
     line = f"cmd data=\"{b64}\" {timestamp}"
     resp = requests.post(url, params=params, data=line, headers=headers, timeout=5)
     resp.raise_for_status()
@@ -586,12 +644,15 @@ def main() -> None:
             "cnc_arc",
             "cnc_rectangle",
             "cnc_go_to_angle",
+            "cnc_home",
+            "cnc_go_home",
             "pump_purge",
             "ask_to_continue",
             "terminal_wait",
             "pause",
             "resume",
             "stop",
+            "crash_diagnostic",
             "run_file",
             "help",
             "?",
@@ -617,6 +678,8 @@ def main() -> None:
             "cnc_arc": ["StartTheta_rad", "EndTheta_rad", "Radius_m", "LinearSpeed_mps", "CenterX_m", "CenterY_m"],
             "cnc_rectangle": ["InsetDistance_m", "LinearSpeed_mps"],
             "cnc_go_to_angle": ["TargetS0_deg", "TargetS1_deg", "AngleTolerance_deg"],
+            "cnc_home": [],
+            "cnc_go_home": [],
             "pump_purge": ["pumpSpeed_degps", "duration_ms"],
             "terminal_wait": ["duration_ms"],
         }
@@ -633,19 +696,7 @@ def main() -> None:
             else:
                 cmd = tokens[0]
                 if cmd == 'run_file':
-                    # Complete path for *.txt files (respect simple dir prefixes)
-                    dirpart, base = os.path.split(text)
-                    search_dir = dirpart if dirpart else '.'
-                    try:
-                        files = glob.glob(os.path.join(search_dir, '*.txt'))
-                    except Exception:
-                        files = []
-                    items: List[str] = []
-                    for f in files:
-                        name = os.path.basename(f)
-                        disp = os.path.join(dirpart, name) if dirpart else name
-                        items.append(disp)
-                    candidates = [s for s in sorted(items) if s.startswith(text)]
+                    candidates = _run_file_path_candidates(text)
                 else:
                     # After a command, offer keys= completions
                     keys = COMMAND_KEYS.get(_canonical_cmd_name(cmd), [])
@@ -664,6 +715,10 @@ def main() -> None:
                 return None
 
         readline.set_completer(_complete)
+        try:
+            readline.set_completer_delims(readline.get_completer_delims().replace('/', ''))
+        except Exception:
+            pass
         # macOS often uses libedit; choose proper binding
         try:
             if hasattr(readline, '__doc__') and readline.__doc__ and 'libedit' in readline.__doc__:

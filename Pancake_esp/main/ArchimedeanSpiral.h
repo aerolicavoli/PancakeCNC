@@ -24,7 +24,7 @@ class ArchimedeanSpiral : public GeneralGuidance
                            bool &CmdViaAngle, float &S0Speed_degps, float &S1Speed_degps) override;
 
     // Common to all guidance types
-    uint8_t GetOpCode() const { return CNC_SPIRAL_OPCODE; }
+    uint8_t GetOpCode() const override { return CNC_SPIRAL_OPCODE; }
     const void *GetConfig() const override { return &Config; }
     size_t GetConfigLength() const override { return sizeof(Config); }
 
