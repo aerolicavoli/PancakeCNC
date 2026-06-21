@@ -78,6 +78,7 @@ IMMEDIATE_OPCODES: Dict[str, int] = {
     "pause": 0x01,
     "resume": 0x02,
     "stop": 0x03,
+    "crash_diagnostic": 0x04,
 }
 
 # Defaults for command arguments
@@ -129,6 +130,7 @@ def print_help() -> None:
     print("  set_pump_constant pumpConstant_degpm=<val>")
     print("  set_accel_scale accelScale=<ratio>")
     print("  pause | resume | stop")
+    print("  crash_diagnostic")
     print("  ask_to_continue [message]")
     print("  terminal_wait duration_ms=<int>")
     print("  run_file <path> [delay_ms]")
@@ -212,6 +214,9 @@ COMMAND_HELP: Dict[str, str] = {
     "pause": "pause — immediately zero speeds and hold state.",
     "resume": "resume — clear pause and continue.",
     "stop": "stop — idle and clear queued CNC commands.",
+    "crash_diagnostic": (
+        "crash_diagnostic — print reset/coredump facts to EVR logs, then erase the saved coredump."
+    ),
     "ask_to_continue": (
         "ask_to_continue [message]\n"
         "  Prompts the user to continue (y/n). Not sent to device."
@@ -229,6 +234,7 @@ CMD_ALIASES: Dict[str, str] = {
     "Pause": "pause",
     "Resume": "resume",
     "Stop": "stop",
+    "CrashDiagnostic": "crash_diagnostic",
     "CNC_Spiral": "cnc_spiral",
     "CNC_Sine": "cnc_sine",
     "CNC_ConstantSpeed": "cnc_constant_speed",
@@ -646,6 +652,7 @@ def main() -> None:
             "pause",
             "resume",
             "stop",
+            "crash_diagnostic",
             "run_file",
             "help",
             "?",

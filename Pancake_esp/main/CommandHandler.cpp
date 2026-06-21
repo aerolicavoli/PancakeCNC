@@ -1,5 +1,6 @@
 #include "CommandHandler.h"
 #include "CNCOpCodes.h"
+#include "CrashDebug.h"
 
 static const char *TAG = "CommandHandler";
 
@@ -89,6 +90,16 @@ static void handle_command(const decoded_cmd_payload_t &cmd)
             ESP_LOGW(TAG, "Stop Command Received");
             uint8_t code = 0x03;
             (void)xQueueSend(cmd_queue_now, &code, 0);
+            break;
+        }
+        case 0x04: // Crash diagnostic
+        {
+            if (cmd.instruction_length != 0)
+            {
+                ESP_LOGW(TAG, "Crash diagnostic ignores %u payload bytes", cmd.instruction_length);
+            }
+            ESP_LOGW(TAG, "Crash Diagnostic Command Received");
+            CrashDebugPrintDiagnostic();
             break;
         }
         default:
