@@ -41,6 +41,7 @@ struct MotorControlState
     {
         pumpPurgeActive = false;
         pumpPurgeRemaining_ms = 0;
+        pumpPurgeSpeed_degps = 0.0f;
     }
 
     void CompleteInstruction()
@@ -49,6 +50,48 @@ struct MotorControlState
         activeGuidance = nullptr;
         s0CmdSpeed_degps = 0.0f;
         s1CmdSpeed_degps = 0.0f;
+    }
+
+    void StartPurge(float speed_degps, int duration_ms, Vector2D position_m,
+                    float currentS0_deg, float currentS1_deg)
+    {
+        activeGuidance = nullptr;
+        pumpThisMode = false;
+        cmdViaAngle = true;
+        target_m = position_m;
+        targetS0_deg = currentS0_deg;
+        targetS1_deg = currentS1_deg;
+        s0CmdSpeed_degps = 0.0f;
+        s1CmdSpeed_degps = 0.0f;
+        pumpSpeed_degps = 0.0f;
+
+        pumpPurgeSpeed_degps = speed_degps;
+        pumpPurgeRemaining_ms = duration_ms;
+        pumpPurgeActive = duration_ms > 0;
+        instructionComplete = !pumpPurgeActive;
+
+        if (!pumpPurgeActive)
+        {
+            StopPurge();
+        }
+    }
+
+    bool AdvancePurge(int delta_ms)
+    {
+        if (!pumpPurgeActive)
+        {
+            return false;
+        }
+
+        pumpSpeed_degps = pumpPurgeSpeed_degps;
+        pumpPurgeRemaining_ms -= delta_ms;
+        if (pumpPurgeRemaining_ms <= 0)
+        {
+            StopPurge();
+            pumpSpeed_degps = 0.0f;
+            CompleteInstruction();
+        }
+        return pumpPurgeActive;
     }
 
     void IdleAtCurrentPosition(Vector2D position_m, float currentS0_deg, float currentS1_deg)

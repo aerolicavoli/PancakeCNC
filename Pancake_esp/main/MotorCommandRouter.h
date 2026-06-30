@@ -7,6 +7,7 @@
 #include "MotionSafety.h"
 #include "StepperMotor.h"
 
+#include <inttypes.h>
 #include <cstring>
 
 class MotorCommandRouter
@@ -57,8 +58,7 @@ class MotorCommandRouter
         }
     }
 
-    void ConsumePendingConfigurationCommands(MotorControlConfig &config, MotorControlState &state,
-                                             StepperMotor &s0Motor, StepperMotor &s1Motor,
+    void ConsumePendingConfigurationCommands(MotorControlConfig &config, StepperMotor &s0Motor, StepperMotor &s1Motor,
                                              StepperMotor &pumpMotor)
     {
         decoded_cmd_payload_t peeked{};
@@ -82,12 +82,6 @@ class MotorCommandRouter
                 xQueueReceive(cncQueue, &cfg, 0);
                 ApplyAccelScale(cfg, config);
             }
-            else if (peeked.opcode == CNC_PUMP_PURGE_OPCODE)
-            {
-                decoded_cmd_payload_t cfg;
-                xQueueReceive(cncQueue, &cfg, 0);
-                StartPumpPurge(cfg, state);
-            }
             else
             {
                 break;
@@ -105,6 +99,24 @@ class MotorCommandRouter
         return xQueueReceive(cncQueue, &decoded, 0) == pdTRUE;
     }
 
+    bool StartPumpPurgeInstruction(const decoded_cmd_payload_t &cfg, MotorControlState &state,
+                                   Vector2D currentPosition_m, float currentS0_deg, float currentS1_deg) const
+    {
+        if (!ValidatePayloadLength(cfg, PUMP_PURGE_PAYLOAD_LEN))
+        {
+            return false;
+        }
+
+        float speed_degps = 0.0f;
+        int32_t duration_ms = 0;
+        std::memcpy(&speed_degps, &cfg.instructions[2], sizeof(float));
+        std::memcpy(&duration_ms, &cfg.instructions[6], sizeof(int32_t));
+        state.StartPurge(speed_degps, duration_ms, currentPosition_m, currentS0_deg, currentS1_deg);
+        ESP_LOGW(logTag, "Pump purge started: speed=%.1f deg/s, duration=%" PRId32 " ms",
+                 speed_degps, duration_ms);
+        return true;
+    }
+
   private:
     static constexpr size_t MOTOR_LIMITS_PAYLOAD_LEN = sizeof(uint8_t) + sizeof(float) * 2;
     static constexpr size_t PUMP_CONSTANT_PAYLOAD_LEN = sizeof(float);
@@ -118,7 +130,7 @@ class MotorCommandRouter
             return true;
         }
 
-        ESP_LOGE(logTag, "Invalid config payload length for OpCode 0x%02X: expected %u got %u",
+        ESP_LOGE(logTag, "Invalid payload length for OpCode 0x%02X: expected %u got %u",
                  cmd.opcode, (unsigned)expectedLength, (unsigned)cmd.instruction_length);
         return false;
     }
@@ -176,20 +188,6 @@ class MotorCommandRouter
 
         std::memcpy(&config.accelScale, &cfg.instructions[2], sizeof(float));
         ESP_LOGI(logTag, "Applied accelScale=%.3f", config.accelScale);
-    }
-
-    void StartPumpPurge(const decoded_cmd_payload_t &cfg, MotorControlState &state) const
-    {
-        if (!ValidatePayloadLength(cfg, PUMP_PURGE_PAYLOAD_LEN))
-        {
-            return;
-        }
-
-        std::memcpy(&state.pumpPurgeSpeed_degps, &cfg.instructions[2], sizeof(float));
-        std::memcpy(&state.pumpPurgeRemaining_ms, &cfg.instructions[6], sizeof(int32_t));
-        state.pumpPurgeActive = (state.pumpPurgeRemaining_ms > 0);
-        ESP_LOGW(logTag, "Pump purge received: speed=%.1f deg/s, duration=%d ms",
-                 state.pumpPurgeSpeed_degps, state.pumpPurgeRemaining_ms);
     }
 
     QueueHandle_t nowQueue;

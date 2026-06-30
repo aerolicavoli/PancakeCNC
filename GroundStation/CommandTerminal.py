@@ -14,7 +14,7 @@ Simplified syntax (no leading / or -a):
   local_origin OriginX_m=0.0 OriginY_m=0.0
 
 Run a newline-delimited program file:
-  run_file TestProgram.txt
+  run_file TestProgram.cake
 
 Env vars: INFLUXDB_URL, INFLUXDB_TOKEN, INFLUXDB_ORG, INFLUXDB_CMD_BUCKET
 
@@ -49,7 +49,12 @@ INFLUXDB_ORG = os.environ.get("INFLUXDB_ORG")
 INFLUXDB_CMD_BUCKET = os.environ.get("INFLUXDB_CMD_BUCKET")
 _last_write_timestamp_ms = 0
 
-RUN_FILE_COMPLETION_ROOTS = [".", "GroundStation/GCode"]
+GCODE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "GCode")
+GCODE_FILE_EXTENSION = ".cake"
+
+
+def _has_path_separator(text: str) -> bool:
+    return os.path.basename(text) != text or "/" in text or "\\" in text
 
 
 OPCODES: Dict[str, Tuple[str, int]] = {  # echo mapping
@@ -136,7 +141,7 @@ def print_help() -> None:
     print("  crash_diagnostic")
     print("  ask_to_continue [message]")
     print("  terminal_wait duration_ms=<int>")
-    print("  run_file <path> [delay_ms]")
+    print("  run_file <filename.cake> [delay_ms]")
     print("")
     print(f"{DIM}Tip: '<Cmd> help' shows command-specific options.{RESET}")
 
@@ -492,34 +497,30 @@ def _build_command_packet(line: str) -> Optional[bytes]:
 
 
 def _run_file_path_candidates(text: str) -> List[str]:
-    """Return path completions for run_file.
-
-    Directories are included with a trailing slash so readline can keep drilling
-    down; files are limited to .txt program files.
-    """
-    if not text:
-        roots = RUN_FILE_COMPLETION_ROOTS
-    elif os.path.dirname(text):
-        roots = [""]
-    else:
-        roots = ["", "GroundStation/GCode"]
+    """Return filename completions for .cake programs in the GCode directory."""
+    if _has_path_separator(text):
+        return []
 
     candidates = set()
-    for root in roots:
-        pattern = os.path.join(root, text + "*") if root else text + "*"
-        try:
-            matches = glob.glob(pattern)
-        except Exception:
-            continue
+    pattern = os.path.join(GCODE_DIR, text + "*")
+    try:
+        matches = glob.glob(pattern)
+    except Exception:
+        return []
 
-        for match in matches:
-            display = match[2:] if match.startswith("." + os.sep) else match
-            if os.path.isdir(match):
-                candidates.add(display.rstrip(os.sep) + os.sep)
-            elif match.endswith(".txt"):
-                candidates.add(display)
+    for match in matches:
+        if os.path.isfile(match) and match.endswith(GCODE_FILE_EXTENSION):
+            candidates.add(os.path.basename(match))
 
     return sorted(candidates)
+
+
+def _resolve_run_file_path(file_name: str) -> str:
+    if not file_name or file_name in {".", ".."} or _has_path_separator(file_name):
+        raise ValueError("run_file expects a file name in GroundStation/GCode, not a path")
+    if not file_name.endswith(GCODE_FILE_EXTENSION):
+        raise ValueError("run_file expects a .cake file name in GroundStation/GCode")
+    return os.path.abspath(os.path.join(GCODE_DIR, file_name))
 
 
 def _write_packet(packet: bytes) -> None:
@@ -548,9 +549,7 @@ def _write_packet(packet: bytes) -> None:
 
 def _run_file(path: str, delay_ms: int, run_file_stack: Optional[List[str]] = None) -> None:
     stack = run_file_stack if run_file_stack is not None else []
-    base_dir = os.path.dirname(stack[-1]) if stack and not os.path.isabs(path) else ""
-    resolved_path = os.path.join(base_dir, path) if base_dir else path
-    abs_path = os.path.abspath(resolved_path)
+    abs_path = _resolve_run_file_path(path)
     if abs_path in stack:
         chain = " -> ".join([*stack, abs_path])
         raise ValueError(f"Recursive run_file call disallowed: {chain}")
@@ -609,7 +608,7 @@ def _send_command(line: str, run_file_stack: Optional[List[str]] = None) -> bool
         return False
     if parts[0] == "run_file":
         if len(parts) < 2:
-            raise ValueError("usage: run_file <path> [delay_ms]")
+            raise ValueError("usage: run_file <filename.cake> [delay_ms]")
         path = parts[1]
         delay_ms = 0
         if len(parts) >= 3:

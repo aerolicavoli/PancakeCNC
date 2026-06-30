@@ -1,11 +1,7 @@
 # Pump speed test program 
 
 # Start by asserting CNC settings
-SetMotorLimits motor=S0 accel=20.0 speed=500.0
-SetMotorLimits motor=S1 accel=20.0 speed=500.0
-SetMotorLimits motor=Pump accel=20.0 speed=800.0
-set_pump_constant pumpConstant_degpm=200.0
-set_accel_scale accelScale=1.0
+run_file cnc_settings.cake
 
 # Draw pancake perimeter
 cnc_jog LinearSpeed_mps=0.03 TargetX_m=0.1 TargetY_m=0.225 PumpOn=0

@@ -3,6 +3,7 @@ import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from GroundStation.VisualizeRunFile import (
     DRAW_LINE_WIDTH,
@@ -41,7 +42,8 @@ class VisualizeRunFileTests(unittest.TestCase):
 
     def test_parse_program_accepts_legacy_aliases(self):
         with tempfile.TemporaryDirectory() as tmp:
-            program = Path(tmp) / "program.txt"
+            root = Path(tmp)
+            program = root / "program.cake"
             program.write_text(
                 "\n".join([
                     "SetMotorLimits motor=All accel=100 speed=200",
@@ -50,13 +52,14 @@ class VisualizeRunFileTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            commands = parse_program(program)
+            with mock.patch("GroundStation.CommandTerminal.GCODE_DIR", str(root)):
+                commands = parse_program(Path("program.cake"))
 
         self.assertEqual([command.cmd for command in commands], ["set_motor_limits", "cnc_jog"])
         self.assertEqual(commands[1].args["PumpOn"], 1)
 
     def test_parse_smiley_face_program(self):
-        commands = parse_program(Path("GroundStation/GCode/SmileyFace.txt"))
+        commands = parse_program(Path("SmileyFace.cake"))
         motion_commands = [
             command.cmd for command in commands
             if command.cmd in {"cnc_jog", "cnc_arc", "cnc_spiral", "cnc_rectangle", "cnc_go_to_angle", "cnc_go_home", "wait"}
@@ -69,19 +72,20 @@ class VisualizeRunFileTests(unittest.TestCase):
     def test_parse_program_expands_nested_run_file_and_local_origin(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            child = root / "child.txt"
-            parent = root / "parent.txt"
+            child = root / "child.cake"
+            parent = root / "parent.cake"
             child.write_text(
                 "cnc_jog TargetX_m=0.01 TargetY_m=0.02 LinearSpeed_mps=0.03 PumpOn=0\n",
                 encoding="utf-8",
             )
             parent.write_text(
                 "local_origin OriginX_m=0.10 OriginY_m=0.20\n"
-                "run_file child.txt\n",
+                "run_file child.cake\n",
                 encoding="utf-8",
             )
 
-            commands = parse_program(parent)
+            with mock.patch("GroundStation.CommandTerminal.GCODE_DIR", str(root)):
+                commands = parse_program(Path("parent.cake"))
 
         self.assertEqual([command.cmd for command in commands], ["local_origin", "cnc_jog"])
         self.assertAlmostEqual(commands[1].args["TargetX_m"], 0.11)
@@ -89,14 +93,15 @@ class VisualizeRunFileTests(unittest.TestCase):
 
     def test_parse_program_disallows_recursive_run_file(self):
         with tempfile.TemporaryDirectory() as tmp:
-            recursive = Path(tmp) / "recursive.txt"
-            recursive.write_text("run_file recursive.txt\n", encoding="utf-8")
+            recursive = Path(tmp) / "recursive.cake"
+            recursive.write_text("run_file recursive.cake\n", encoding="utf-8")
 
-            with self.assertRaisesRegex(IntentError, "recursive run_file include disallowed"):
-                parse_program(recursive)
+            with mock.patch("GroundStation.CommandTerminal.GCODE_DIR", str(Path(tmp))):
+                with self.assertRaisesRegex(IntentError, "recursive run_file include disallowed"):
+                    parse_program(Path("recursive.cake"))
 
     def test_simulate_multi_smile_run_file(self):
-        result = simulate_file(Path("GroundStation/GCode/multi_smile.txt"), dt_ms=100)
+        result = simulate_file(Path("multi_smile.cake"), dt_ms=100)
 
         draw_segments = [segment for segment in result.segments if segment.pump_on]
 

@@ -1,5 +1,7 @@
 Pancake_esp/build
 Pancake_esp/managed_components
+*.png
+*.gif
 *Secret*
 *.bkp
 *-bak

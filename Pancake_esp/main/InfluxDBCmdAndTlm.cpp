@@ -34,7 +34,7 @@ static void InitializeUART2()
 
 namespace
 {
-static constexpr int64_t TELEMETRY_PERIOD_1HZ_MS = 1000;
+static constexpr int64_t TELEMETRY_PERIOD_1HZ_MS = 300;
 static constexpr int64_t TELEMETRY_PERIOD_0_25HZ_MS = 4000;
 static constexpr int64_t TELEMETRY_PERIOD_0_05HZ_MS = 20000;
 static constexpr size_t MAX_REGISTERED_TELEMETRY_POINTS = 32;

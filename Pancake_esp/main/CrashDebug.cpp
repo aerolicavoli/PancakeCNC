@@ -6,9 +6,33 @@
 #include "esp_system.h"
 #include "nvs.h"
 
+#include <cstddef>
 #include <cstdlib>
 
 static const char *TAG = "CrashDebug";
+
+static void CopyPrintableString(char *dest, size_t dest_size, const char *src, size_t src_size)
+{
+    if (dest_size == 0)
+    {
+        return;
+    }
+
+    size_t copy_len = 0;
+    while (copy_len < src_size && src[copy_len] != '\0' && copy_len + 1 < dest_size)
+    {
+        unsigned char ch = static_cast<unsigned char>(src[copy_len]);
+        dest[copy_len] = (ch >= 32 && ch <= 126) ? static_cast<char>(ch) : '.';
+        copy_len++;
+    }
+    dest[copy_len] = '\0';
+}
+
+template <size_t N>
+static void CopyPrintableString(char *dest, size_t dest_size, const char (&src)[N])
+{
+    CopyPrintableString(dest, dest_size, src, N);
+}
 
 static const char *ResetReasonToString(esp_reset_reason_t reason)
 {
@@ -157,16 +181,21 @@ static void CrashDebugPrintCoreDumpSummary(void)
         return;
     }
 
+    char exc_task[sizeof(summary->exc_task) + 1] = {};
+    CopyPrintableString(exc_task, sizeof(exc_task), summary->exc_task);
     ESP_LOGW(TAG, "Crash task=%s tcb=0x%08lx pc=0x%08lx",
-             summary->exc_task,
+             exc_task,
              (unsigned long)summary->exc_tcb,
              (unsigned long)summary->exc_pc);
     ESP_LOGW(TAG, "Crash cause=%lu vaddr=0x%08lx version=0x%08lx",
              (unsigned long)summary->ex_info.exc_cause,
              (unsigned long)summary->ex_info.exc_vaddr,
              (unsigned long)summary->core_dump_version);
-    ESP_LOGW(TAG, "Crash elf_sha=%s",
-             reinterpret_cast<const char *>(summary->app_elf_sha256));
+    char app_elf_sha[sizeof(summary->app_elf_sha256) + 1] = {};
+    CopyPrintableString(app_elf_sha, sizeof(app_elf_sha),
+                        reinterpret_cast<const char *>(summary->app_elf_sha256),
+                        sizeof(summary->app_elf_sha256));
+    ESP_LOGW(TAG, "Crash elf_sha=%s", app_elf_sha);
     ESP_LOGW(TAG, "Crash bt depth=%lu corrupted=%u",
              (unsigned long)summary->exc_bt_info.depth,
              summary->exc_bt_info.corrupted ? 1U : 0U);

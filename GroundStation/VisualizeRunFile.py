@@ -11,9 +11,21 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 try:
-    from GroundStation.CommandTerminal import DEFAULTS, _canonical_cmd_name, _parse_kv_tokens
+    from GroundStation.CommandTerminal import (
+        DEFAULTS,
+        _canonical_cmd_name,
+        _parse_kv_tokens,
+        _run_file_path_candidates as _terminal_run_file_path_candidates,
+        _resolve_run_file_path as _resolve_terminal_run_file_path,
+    )
 except ModuleNotFoundError:  # pragma: no cover - direct script execution fallback
-    from CommandTerminal import DEFAULTS, _canonical_cmd_name, _parse_kv_tokens
+    from CommandTerminal import (
+        DEFAULTS,
+        _canonical_cmd_name,
+        _parse_kv_tokens,
+        _run_file_path_candidates as _terminal_run_file_path_candidates,
+        _resolve_run_file_path as _resolve_terminal_run_file_path,
+    )
 
 
 C_DEG_TO_RAD = math.pi / 180.0
@@ -218,18 +230,21 @@ def _apply_local_origin(cmd: str, args: dict[str, Any], local_origin: Vec2) -> d
     return adjusted
 
 
-def _resolve_run_file_path(path_text: str, including_path: Path) -> Path:
-    path = Path(path_text)
-    if path.is_absolute():
-        return path
-    candidate = including_path.parent / path
-    if candidate.exists():
-        return candidate
-    return path
+def _resolve_program_path(path: Path) -> Path:
+    try:
+        resolved_path = Path(_resolve_terminal_run_file_path(str(path)))
+    except ValueError as exc:
+        raise IntentError(str(exc)) from exc
+
+    if not resolved_path.is_file():
+        candidates = _terminal_run_file_path_candidates("")
+        available = f"; available: {', '.join(candidates)}" if candidates else ""
+        raise IntentError(f"run_file file not found in GroundStation/GCode: {path}{available}")
+    return resolved_path
 
 
 def _parse_program(path: Path, include_stack: list[Path], local_origin: Vec2) -> tuple[list[ParsedCommand], Vec2]:
-    resolved_path = path.resolve()
+    resolved_path = _resolve_program_path(path).resolve()
     if resolved_path in include_stack:
         chain = " -> ".join(str(item) for item in [*include_stack, resolved_path])
         raise IntentError(f"recursive run_file include disallowed: {chain}")
@@ -253,8 +268,8 @@ def _parse_program(path: Path, include_stack: list[Path], local_origin: Vec2) ->
 
             if cmd == "run_file":
                 if len(parts) < 2:
-                    raise IntentError(f"line {line_no}: run_file requires a path")
-                child_path = _resolve_run_file_path(parts[1], resolved_path)
+                    raise IntentError(f"line {line_no}: run_file requires a file name")
+                child_path = Path(parts[1])
                 child_commands, local_origin = _parse_program(child_path, include_stack, local_origin)
                 commands.extend(child_commands)
                 continue
@@ -791,9 +806,19 @@ def _resolve_start_angles(args: argparse.Namespace) -> tuple[float, float]:
     return GO_HOME_S0_DEG, GO_HOME_S1_DEG
 
 
+def _use_headless_backend_if_needed(no_show: bool) -> None:
+    if not no_show:
+        return
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+    except Exception:
+        pass
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("path", type=Path, help="run_file text program to preview")
+    parser.add_argument("path", type=Path, help="run_file .cake filename to preview from GroundStation/GCode")
     parser.add_argument("--output", type=Path, help="PNG path to write")
     parser.add_argument("--gif-output", type=Path, help="animated GIF path to write")
     parser.add_argument("--gif-fps", type=float, default=20.0, help="animated GIF frames per second")
@@ -815,6 +840,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_arg_parser()
     args = parser.parse_args()
+    _use_headless_backend_if_needed(args.no_show)
 
     start_s0_deg, start_s1_deg = _resolve_start_angles(args)
     output = args.output

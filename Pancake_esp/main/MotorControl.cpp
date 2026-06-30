@@ -265,7 +265,7 @@ void MotorControlTask(void *Parameters)
         // Apply any pending configuration commands (non-blocking)
         if (!state.pauseActive && !homingController.IsActive())
         {
-            commandRouter.ConsumePendingConfigurationCommands(config, state, S0Motor, S1Motor, PumpMotor);
+            commandRouter.ConsumePendingConfigurationCommands(config, S0Motor, S1Motor, PumpMotor);
         }
 
         const bool readyForNextMotionCommand =
@@ -325,6 +325,15 @@ void MotorControlTask(void *Parameters)
                         ESP_LOGI(TAG, "Local origin set to %.3f, %.3f m", LocalOrigin_m.x, LocalOrigin_m.y);
                     }
                     state.instructionComplete = true;
+                }
+                else if (decoded.opcode == CNC_PUMP_PURGE_OPCODE)
+                {
+                    if (!commandRouter.StartPumpPurgeInstruction(decoded, state, state.currentPosition_m,
+                                                                 LocalS0Tlm.Position_deg,
+                                                                 LocalS1Tlm.Position_deg))
+                    {
+                        state.instructionComplete = true;
+                    }
                 }
                 else
                 {
@@ -516,15 +525,12 @@ void MotorControlTask(void *Parameters)
             }
         }
 
-        // Apply pump purge override if active
+        // A purge is a queued pump-only instruction, so it blocks later motion commands.
         if (!state.pauseActive && !homingController.IsActive() && state.pumpPurgeActive)
         {
-            state.pumpSpeed_degps = state.pumpPurgeSpeed_degps;
-            state.pumpPurgeRemaining_ms -= MOTOR_CONTROL_PERIOD_MS;
-            if (state.pumpPurgeRemaining_ms <= 0)
+            bool purgeStillActive = state.AdvancePurge(MOTOR_CONTROL_PERIOD_MS);
+            if (!purgeStillActive)
             {
-                state.pumpPurgeActive = false;
-                state.pumpSpeed_degps = 0.0f;
                 ESP_LOGI(TAG, "Pump purge complete");
             }
         }

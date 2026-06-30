@@ -87,7 +87,7 @@ def main() -> None:
     parser.add_argument("--inset-m", type=float, default=0.01)
     parser.add_argument("--speed-mps", type=float, default=0.03)
     parser.add_argument("--plot", type=Path, default=Path("InscribedRectangle.png"))
-    parser.add_argument("--gcode", type=Path, default=Path("InscribedRectangle.txt"))
+    parser.add_argument("--gcode", type=Path, default=Path("InscribedRectangle.cake"))
     args = parser.parse_args()
 
     corners = compute_corners(args.inset_m)

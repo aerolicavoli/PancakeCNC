@@ -49,27 +49,37 @@ class CommandTerminalPacketTests(unittest.TestCase):
 
     def test_run_file_can_call_run_file(self):
         with tempfile.TemporaryDirectory() as tmp:
-            child = os.path.join(tmp, "child.txt")
-            parent = os.path.join(tmp, "parent.txt")
+            child = os.path.join(tmp, "child.cake")
+            parent = os.path.join(tmp, "parent.cake")
             with open(child, "w", encoding="utf-8") as f:
                 f.write("local_origin OriginX_m=0.1 OriginY_m=0.2\n")
             with open(parent, "w", encoding="utf-8") as f:
-                f.write(f"run_file {child} 1\n")
+                f.write("run_file child.cake 1\n")
 
-            with mock.patch("GroundStation.CommandTerminal._write_packet") as write_packet:
-                self.assertTrue(_send_command(f"run_file {parent} 1"))
+            with mock.patch("GroundStation.CommandTerminal.GCODE_DIR", tmp):
+                with mock.patch("GroundStation.CommandTerminal._write_packet") as write_packet:
+                    self.assertTrue(_send_command("run_file parent.cake 1"))
 
         write_packet.assert_called_once()
         self.assertEqual(write_packet.call_args.args[0][0], 0x1F)
 
     def test_run_file_disallows_recursion(self):
         with tempfile.TemporaryDirectory() as tmp:
-            recursive = os.path.join(tmp, "recursive.txt")
+            recursive = os.path.join(tmp, "recursive.cake")
             with open(recursive, "w", encoding="utf-8") as f:
-                f.write(f"run_file {recursive} 1\n")
+                f.write("run_file recursive.cake 1\n")
 
-            with self.assertRaisesRegex(ValueError, "Recursive run_file call disallowed"):
-                _send_command(f"run_file {recursive} 1")
+            with mock.patch("GroundStation.CommandTerminal.GCODE_DIR", tmp):
+                with self.assertRaisesRegex(ValueError, "Recursive run_file call disallowed"):
+                    _send_command("run_file recursive.cake 1")
+
+    def test_run_file_rejects_paths(self):
+        with self.assertRaisesRegex(ValueError, "file name"):
+            _send_command("run_file GroundStation/GCode/TestProgram.cake 1")
+
+    def test_run_file_rejects_non_cake_extension(self):
+        with self.assertRaisesRegex(ValueError, r"\.cake"):
+            _send_command("run_file TestProgram.txt 1")
 
 
 if __name__ == "__main__":

@@ -1,12 +1,7 @@
 # Lux Aeterna space logo
 # Multi-pass approximation using arcs for the ring strokes and orbit stroke.
 
-# Start by asserting CNC settings
-SetMotorLimits motor=S0 accel=20.0 speed=500.0
-SetMotorLimits motor=S1 accel=20.0 speed=500.0
-SetMotorLimits motor=Pump accel=20.0 speed=800.0
-set_pump_constant pumpConstant_degpm=200.0
-set_accel_scale accelScale=1.0
+run_file cnc_settings.cake
 
 # Central orbit arc. Its endpoints are shared with the two outer arcs.
 cnc_jog TargetX_m=0.046789 TargetY_m=0.151923 LinearSpeed_mps=0.030000 PumpOn=0
